@@ -193,8 +193,6 @@ export class KubeConfigReader {
         user: {
           token: token.trim(),
         },
-        // Optionally include namespace if needed
-        // namespace: namespace.trim(),
       };
     } catch (error: any) {
       this.logger.error('Failed to load in-cluster configuration', error);
