@@ -17,8 +17,30 @@ export class TektonClient implements ITektonClient {
   private k8sClient: IKubernetesClient;
   private readonly logger = new Logger(TektonClient.name);
 
-  constructor(kubeConfigPath?: string) {
-    this.k8sClient = new KubernetesClient(kubeConfigPath);
+  /**
+   * Private constructor to enforce the use of the async factory method.
+   * @param k8sClient Instance of IKubernetesClient.
+   */
+  private constructor(k8sClient: IKubernetesClient) {
+    this.k8sClient = k8sClient;
+  }
+
+  /**
+   * Static factory method to create an instance of TektonClient.
+   * @param kubeConfigPath Optional path to kubeconfig file.
+   * @param k8sClient Optional custom Kubernetes client.
+   */
+  public static async create(
+    kubeConfigPath?: string,
+    k8sClient?: IKubernetesClient,
+  ): Promise<TektonClient> {
+    let client: IKubernetesClient;
+    if (k8sClient) {
+      client = k8sClient;
+    } else {
+      client = await KubernetesClient.create(kubeConfigPath);
+    }
+    return new TektonClient(client);
   }
 
   public async getPipeline(
