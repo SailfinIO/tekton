@@ -1,3 +1,10 @@
+## [1.0.1](https://github.com/SailfinIO/tekton/compare/v1.0.0...v1.0.1) (2024-11-07)
+
+
+### Bug Fixes
+
+* load kubeconfig from default if none provided ([dbcf4f5](https://github.com/SailfinIO/tekton/commit/dbcf4f5c9308345bc00b9a28dd41b6c46133a096))
+
 # 1.0.0 (2024-11-07)
 
 
