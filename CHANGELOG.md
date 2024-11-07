@@ -1,3 +1,10 @@
+## [1.0.2](https://github.com/SailfinIO/tekton/compare/v1.0.1...v1.0.2) (2024-11-07)
+
+
+### Bug Fixes
+
+* remove namespace ([6b0f74d](https://github.com/SailfinIO/tekton/commit/6b0f74ddbb4f6cf336e4d1b2002b8b974c82973c))
+
 ## [1.0.1](https://github.com/SailfinIO/tekton/compare/v1.0.0...v1.0.1) (2024-11-07)
 
 
