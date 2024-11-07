@@ -40,7 +40,7 @@ export class KubeConfigReader {
       const currentContextName = config.currentContext;
       if (!currentContextName) {
         this.logger.error(`No currentContext is set in kubeconfig.`);
-        throw new Error(`No currentContext is set in kubeconfig.`);
+        return null;
       }
 
       const context = config.contexts.find(
@@ -51,9 +51,7 @@ export class KubeConfigReader {
         this.logger.error(
           `Context '${currentContextName}' not found in kubeconfig.`,
         );
-        throw new Error(
-          `Context '${currentContextName}' not found in kubeconfig.`,
-        );
+        return null;
       }
 
       const clusterEntry = config.clusters.find(
@@ -65,9 +63,7 @@ export class KubeConfigReader {
         this.logger.error(
           `Cluster '${context.cluster}' not found in kubeconfig.`,
         );
-        throw new Error(
-          `Cluster '${context.cluster}' not found in kubeconfig.`,
-        );
+        return null;
       }
 
       const userEntry = config.users.find((u: any) => u.name === context.user);
@@ -75,7 +71,7 @@ export class KubeConfigReader {
 
       if (!user) {
         this.logger.error(`User '${context.user}' not found in kubeconfig.`);
-        throw new Error(`User '${context.user}' not found in kubeconfig.`);
+        return null;
       }
 
       return {
@@ -83,8 +79,16 @@ export class KubeConfigReader {
         user,
       };
     } catch (error: any) {
-      this.logger.error(`Failed to read kubeconfig: ${error.message}`);
-      return null;
+      if (error.code === 'ENOENT') {
+        // File does not exist
+        this.logger.warn(
+          `Kubeconfig file not found at path: ${this.kubeConfigPath}`,
+        );
+        return null;
+      } else {
+        this.logger.error(`Failed to read kubeconfig: ${error.message}`);
+        return null;
+      }
     }
   }
 

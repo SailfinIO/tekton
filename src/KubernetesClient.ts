@@ -20,7 +20,8 @@ export class KubernetesClient implements IKubernetesClient {
 
   /**
    * Static factory method for creating an instance of KubernetesClient.
-   * This ensures asynchronous initialization is handled properly.
+   * Attempts to load kubeconfig from the default path if no path is provided.
+   * Falls back to in-cluster config if loading from file fails.
    * @param kubeConfigPath Optional path to kubeconfig file.
    */
   public static async create(
@@ -30,6 +31,7 @@ export class KubernetesClient implements IKubernetesClient {
     let kubeConfig: ResolvedKubeConfig | null = null;
 
     if (kubeConfigPath) {
+      // Attempt to load from the specified kubeConfigPath
       kubeConfig = await reader.getKubeConfig();
       if (!kubeConfig) {
         throw new Error(
@@ -38,13 +40,19 @@ export class KubernetesClient implements IKubernetesClient {
       }
       reader.logger.info(`Loaded kube config from path: ${kubeConfigPath}`);
     } else {
-      kubeConfig = await reader.getInClusterConfig();
-      reader.logger.info('Loaded in-cluster kube config');
+      // Attempt to load from the default kubeconfig path
+      kubeConfig = await reader.getKubeConfig();
+      if (kubeConfig) {
+        reader.logger.info('Loaded kube config from default path.');
+      } else {
+        // Fallback to in-cluster configuration
+        kubeConfig = await reader.getInClusterConfig();
+        reader.logger.info('Loaded in-cluster kube config.');
+      }
     }
 
     return new KubernetesClient(kubeConfig);
   }
-
   private getRequestOptions(method: string, path: string): RequestOptions {
     const { cluster, user } = this.kubeConfig;
     const serverUrl = new URL(cluster.server);
