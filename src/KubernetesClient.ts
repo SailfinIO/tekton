@@ -16,7 +16,15 @@ export class KubernetesClient implements IKubernetesClient {
 
   constructor(kubeConfigPath?: string) {
     const reader = new KubeConfigReader(kubeConfigPath);
-    this.kubeConfig = reader.getKubeConfig();
+    reader
+      .getKubeConfig()
+      .then((config) => {
+        this.kubeConfig = config;
+      })
+      .catch((error) => {
+        this.logger.error('Failed to load kube config', error);
+        throw error;
+      });
   }
 
   private getRequestOptions(method: string, path: string): RequestOptions {

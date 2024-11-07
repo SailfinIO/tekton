@@ -15,7 +15,7 @@ export class KubeConfigReader {
 
   private mapKeys(obj: any): any {
     if (Array.isArray(obj)) {
-      return obj.map(this.mapKeys);
+      return obj.map((item) => this.mapKeys(item));
     } else if (obj !== null && typeof obj === 'object') {
       const mapped: any = {};
       for (const key of Object.keys(obj)) {
@@ -28,41 +28,55 @@ export class KubeConfigReader {
     }
   }
 
-  public getKubeConfig(): ResolvedKubeConfig {
-    const fileContent = readFileSync(this.kubeConfigPath, 'utf8');
-    const rawConfig = YamlParser.parse(fileContent);
-    const config: KubeConfig = this.mapKeys(rawConfig);
+  public async getKubeConfig(): Promise<ResolvedKubeConfig | null> {
+    try {
+      const fileContent = readFileSync(this.kubeConfigPath, 'utf8');
+      const rawConfig = YamlParser.parse(fileContent);
+      const config: KubeConfig = this.mapKeys(rawConfig);
 
-    const currentContextName = config['current-context'];
-    const context = config.contexts.find(
-      (ctx) => ctx.name === currentContextName,
-    )?.context;
+      const currentContextName = config['current-context'];
+      const context = config.contexts.find(
+        (ctx) => ctx.name === currentContextName,
+      )?.context;
 
-    if (!context) {
-      throw new Error(
-        `Context '${currentContextName}' not found in kubeconfig.`,
+      if (!context) {
+        this.logger.error(
+          `Context '${currentContextName}' not found in kubeconfig.`,
+        );
+        throw new Error(
+          `Context '${currentContextName}' not found in kubeconfig.`,
+        );
+      }
+
+      const clusterEntry = config.clusters.find(
+        (c) => c.name === context.cluster,
       );
+      const cluster = clusterEntry?.cluster;
+
+      if (!cluster) {
+        this.logger.error(
+          `Cluster '${context.cluster}' not found in kubeconfig.`,
+        );
+        throw new Error(
+          `Cluster '${context.cluster}' not found in kubeconfig.`,
+        );
+      }
+
+      const userEntry = config.users.find((u) => u.name === context.user);
+      const user = userEntry?.user;
+
+      if (!user) {
+        this.logger.error(`User '${context.user}' not found in kubeconfig.`);
+        throw new Error(`User '${context.user}' not found in kubeconfig.`);
+      }
+
+      return {
+        cluster,
+        user,
+      };
+    } catch (error) {
+      this.logger.error(`Failed to read kubeconfig: ${error.message}`);
+      return null;
     }
-
-    const clusterEntry = config.clusters.find(
-      (c) => c.name === context.cluster,
-    );
-    const cluster = clusterEntry?.cluster;
-
-    if (!cluster) {
-      throw new Error(`Cluster '${context.cluster}' not found in kubeconfig.`);
-    }
-
-    const userEntry = config.users.find((u) => u.name === context.user);
-    const user = userEntry?.user;
-
-    if (!user) {
-      throw new Error(`User '${context.user}' not found in kubeconfig.`);
-    }
-
-    return {
-      cluster,
-      user,
-    };
   }
 }
