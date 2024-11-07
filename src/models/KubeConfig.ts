@@ -50,7 +50,7 @@ export interface KubeConfig {
   apiVersion?: string;
   kind?: string;
   preferences?: any;
-  'current-context'?: string;
+  currentContext?: string;
   clusters?: Cluster[];
   users?: User[];
   contexts?: Context[];

@@ -1,10 +1,10 @@
-// src/utils/KubernetesClient.ts
+// src/KubernetesClient.ts
 
 import { request, RequestOptions } from 'https';
 import { URL } from 'url';
 import { ResolvedKubeConfig, KubernetesResource, WatchEvent } from './models';
-import { KubeConfigReader } from './utils/KubeConfigReader';
-import { Logger } from './utils/Logger';
+import { KubeConfigReader } from './utils';
+import { Logger } from './utils';
 import { readFileSync } from 'fs';
 import { ApiError } from './errors';
 import { IKubernetesClient } from './interfaces';
@@ -14,17 +14,35 @@ export class KubernetesClient implements IKubernetesClient {
   private kubeConfig: ResolvedKubeConfig;
   private readonly logger = new Logger(KubernetesClient.name);
 
-  constructor(kubeConfigPath?: string) {
+  private constructor(kubeConfig: ResolvedKubeConfig) {
+    this.kubeConfig = kubeConfig;
+  }
+
+  /**
+   * Static factory method for creating an instance of KubernetesClient.
+   * This ensures asynchronous initialization is handled properly.
+   * @param kubeConfigPath Optional path to kubeconfig file.
+   */
+  public static async create(
+    kubeConfigPath?: string,
+  ): Promise<KubernetesClient> {
     const reader = new KubeConfigReader(kubeConfigPath);
-    reader
-      .getKubeConfig()
-      .then((config) => {
-        this.kubeConfig = config;
-      })
-      .catch((error) => {
-        this.logger.error('Failed to load kube config', error);
-        throw error;
-      });
+    let kubeConfig: ResolvedKubeConfig | null = null;
+
+    if (kubeConfigPath) {
+      kubeConfig = await reader.getKubeConfig();
+      if (!kubeConfig) {
+        throw new Error(
+          `Failed to load kubeconfig from path: ${kubeConfigPath}`,
+        );
+      }
+      reader.logger.info(`Loaded kube config from path: ${kubeConfigPath}`);
+    } else {
+      kubeConfig = await reader.getInClusterConfig();
+      reader.logger.info('Loaded in-cluster kube config');
+    }
+
+    return new KubernetesClient(kubeConfig);
   }
 
   private getRequestOptions(method: string, path: string): RequestOptions {
