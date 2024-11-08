@@ -1,3 +1,10 @@
+## [1.0.3](https://github.com/SailfinIO/tekton/compare/v1.0.2...v1.0.3) (2024-11-08)
+
+
+### Bug Fixes
+
+* missing readme ([8c9c3f7](https://github.com/SailfinIO/tekton/commit/8c9c3f7c1f5c4317650e6962fe76332e52ef9a1f))
+
 ## [1.0.2](https://github.com/SailfinIO/tekton/compare/v1.0.1...v1.0.2) (2024-11-07)
 
 
