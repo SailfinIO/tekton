@@ -1,3 +1,10 @@
+## [1.0.5](https://github.com/SailfinIO/tekton/compare/v1.0.4...v1.0.5) (2024-11-08)
+
+
+### Bug Fixes
+
+* typos and dep updates ([8f71f1f](https://github.com/SailfinIO/tekton/commit/8f71f1f36c9a0cb0c99d0cb038b2e84c6f04b585))
+
 ## [1.0.4](https://github.com/SailfinIO/tekton/compare/v1.0.3...v1.0.4) (2024-11-08)
 
 
