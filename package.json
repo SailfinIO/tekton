@@ -32,8 +32,9 @@
   },
   "keywords": [
     "tekton",
-    "keubernetes",
-    "typescript"
+    "kubernetes",
+    "typescript",
+    "nodejs"
   ],
   "scripts": {
     "build": "tsc -b tsconfig.build.json",

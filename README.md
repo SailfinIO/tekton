@@ -2,7 +2,8 @@
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![npm version](https://img.shields.io/npm/v/@sailfin/tekton.svg)
-![npm downloads](https://img.shields.io/npm/dt/@sailfin/tekton.svg)
+[![CodeQL Advanced](https://github.com/SailfinIO/tekton/actions/workflows/codeql.yml/badge.svg)](https://github.com/SailfinIO/tekton/actions/workflows/codeql.yml)
+[![Build](https://github.com/SailfinIO/tekton/actions/workflows/build.yaml/badge.svg)](https://github.com/SailfinIO/tekton/actions/workflows/build.yaml)
 
 `@sailfin/tekton` is a robust, enterprise-grade NPM package that provides seamless integration with Tekton and Kubernetes. It offers powerful clients for interacting with Tekton pipelines and Kubernetes resources, enabling developers and DevOps engineers to automate and manage their CI/CD workflows with ease.
 
