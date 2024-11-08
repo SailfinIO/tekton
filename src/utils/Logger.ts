@@ -1,14 +1,31 @@
-// src/utils/Logger.ts
-
-import { ILogger } from '../interfaces';
+import { ILogger } from '../interfaces/Ilogger';
 import { LogLevel } from '../enums';
 import { ColorCodes, ResetCode } from './ColorCodes';
 
+/**
+ * A simple, customizable logger class for logging messages at various log levels.
+ * Provides options for colored output and context-based logging.
+ *
+ * @module Logger
+ * @example
+ * const logger = new Logger('MyClass', LogLevel.INFO, true);
+ * logger.info('This is an info message');
+ * logger.error('This is an error message');
+ * logger.warn('This is a warning message');
+ * logger.debug('This is a debug message');
+ * logger.verbose('This is a verbose message');
+ */
 export class Logger implements ILogger {
   private context: string;
   private currentLogLevel: LogLevel;
   private useColors: boolean;
 
+  /**
+   * Creates a new instance of the Logger.
+   * @param context - Identifies the origin or purpose of log messages.
+   * @param logLevel - Sets the initial log level; defaults to LogLevel.INFO.
+   * @param useColors - Enables color-coded output if true; defaults to true.
+   */
   constructor(
     context: string,
     logLevel: LogLevel = LogLevel.INFO,
@@ -19,10 +36,21 @@ export class Logger implements ILogger {
     this.useColors = useColors;
   }
 
-  setLogLevel(level: LogLevel): void {
+  /**
+   * Sets the log level for the logger, defining the minimum severity of messages to log.
+   * @param level - The log level to apply (e.g., LogLevel.ERROR, LogLevel.DEBUG).
+   * @example
+   * logger.setLogLevel(LogLevel.DEBUG);
+   */
+  public setLogLevel(level: LogLevel): void {
     this.currentLogLevel = level;
   }
 
+  /**
+   * Determines whether a given log level should be logged based on the current log level setting.
+   * @param level - The log level to evaluate.
+   * @returns True if the specified level meets or exceeds the current log level; otherwise, false.
+   */
   private shouldLog(level: LogLevel): boolean {
     const levels: LogLevel[] = [
       LogLevel.ERROR,
@@ -35,33 +63,30 @@ export class Logger implements ILogger {
   }
 
   /**
-   * Processes unknown data types into a string format suitable for logging.
-   * @param data - The unknown data to process.
-   * @returns A string representation of the data.
+   * Converts unknown data types into a log-friendly string format.
+   * @param data - The data to process.
+   * @returns A stringified version of the data, or a message indicating a failure to stringify.
    */
   private processUnknown(data?: unknown): string {
     if (data === undefined) {
       return '';
     }
-
     if (typeof data === 'string') {
       return data;
     }
-
     if (data instanceof Error) {
       return `${data.message}\n${data.stack}`;
     }
-
     try {
       return JSON.stringify(data, this.circularReplacer());
-    } catch (e) {
+    } catch {
       return 'Unable to stringify additional data';
     }
   }
 
   /**
-   * Handles circular references in objects.
-   * @returns A replacer function for JSON.stringify.
+   * Provides a replacer function to handle circular references in objects.
+   * @returns A function that replaces circular references with "[Circular]".
    */
   private circularReplacer() {
     const seen = new WeakSet();
@@ -76,23 +101,36 @@ export class Logger implements ILogger {
     };
   }
 
+  /**
+   * Generates a human-readable timestamp for log messages.
+   * @returns The current date and time in a readable string format.
+   * @example
+   * const timestamp = this.formatTimestamp();
+   * console.log(timestamp);
+   * // Output: "01/01/2022, 12:00:00 AM"
+   */
   private formatTimestamp(): string {
     const now = new Date();
     const month = String(now.getMonth() + 1).padStart(2, '0');
     const day = String(now.getDate()).padStart(2, '0');
     const year = now.getFullYear();
-
     let hours = now.getHours();
     const minutes = String(now.getMinutes()).padStart(2, '0');
     const seconds = String(now.getSeconds()).padStart(2, '0');
     const ampm = hours >= 12 ? 'PM' : 'AM';
 
-    hours = hours % 12;
-    hours = hours ? hours : 12; // the hour '0' should be '12'
+    hours = hours % 12 || 12;
 
     return `${month}/${day}/${year}, ${hours}:${minutes}:${seconds} ${ampm}`;
   }
 
+  /**
+   * Constructs and formats a log message with optional colors and additional data.
+   * @param level - The log level of the message (e.g., LogLevel.ERROR).
+   * @param message - The main message to log.
+   * @param additionalData - Optional additional data to include with the message.
+   * @returns A formatted string ready for logging.
+   */
   private formatMessage(
     level: LogLevel,
     message: string,
@@ -100,24 +138,17 @@ export class Logger implements ILogger {
   ): string {
     const timestamp = this.formatTimestamp();
     const pid = process.pid;
-    const white = ColorCodes['white'];
-    const yellow = ColorCodes['yellow'];
-    const reset = ResetCode;
-    const color = ColorCodes[level] || '';
 
-    // Construct the timestamp part in white
+    const white = this.useColors ? ColorCodes['white'] : '';
+    const yellow = this.useColors ? ColorCodes['yellow'] : '';
+    const reset = this.useColors ? ResetCode : '';
+    const color = this.useColors ? ColorCodes[level] || '' : '';
+
     let formattedMessage = `${white}${pid} - ${timestamp}${reset} `;
-
-    // Add [LOG_LEVEL] in its respective color
     formattedMessage += `${color}[${level.toUpperCase()}]${reset} `;
-
-    // Add [Context] in white
     formattedMessage += `${yellow}[${this.context}]${reset} `;
-
-    // Add message in the color corresponding to log level
     formattedMessage += `${color}${message}${reset}`;
 
-    // Append additional data if present
     if (additionalData) {
       formattedMessage += ` | ${color}${additionalData}${reset}`;
     }
@@ -125,15 +156,30 @@ export class Logger implements ILogger {
     return formattedMessage;
   }
 
-  error(message: string, trace?: unknown): void {
-    if (!this.shouldLog(LogLevel.ERROR)) {
-      return;
+  /**
+   * Logs an error message to the console, with optional trace information.
+   * @param message - The error message.
+   * @param trace - Optional trace data to include.
+   * @example
+   * logger.error('An error occurred', new Error('Error details'));
+   */
+  public error(message: string, trace?: unknown): void {
+    if (this.shouldLog(LogLevel.ERROR)) {
+      const formattedTrace = this.processUnknown(trace);
+      console.error(
+        this.formatMessage(LogLevel.ERROR, message, formattedTrace),
+      );
     }
-    const formattedTrace = this.processUnknown(trace);
-    console.error(this.formatMessage(LogLevel.ERROR, message, formattedTrace));
   }
 
-  warn(message: string, context?: unknown): void {
+  /**
+   * Logs a warning message to the console, with optional context.
+   * @param message - The warning message.
+   * @param context - Optional additional context.
+   * @example
+   * logger.warn('Potential issue detected');
+   */
+  public warn(message: string, context?: unknown): void {
     if (this.shouldLog(LogLevel.WARN)) {
       const formattedContext = this.processUnknown(context);
       console.warn(
@@ -142,7 +188,14 @@ export class Logger implements ILogger {
     }
   }
 
-  info(message: string, context?: unknown): void {
+  /**
+   * Logs an informational message to the console, with optional context.
+   * @param message - The informational message.
+   * @param context - Optional additional context.
+   * @example
+   * logger.info('System operational');
+   */
+  public info(message: string, context?: unknown): void {
     if (this.shouldLog(LogLevel.INFO)) {
       const formattedContext = this.processUnknown(context);
       console.info(
@@ -151,7 +204,14 @@ export class Logger implements ILogger {
     }
   }
 
-  debug(message: string, context?: unknown): void {
+  /**
+   * Logs a debug message to the console, with optional context for troubleshooting.
+   * @param message - The debug message.
+   * @param context - Optional additional context.
+   * @example
+   * logger.debug('Debugging application flow');
+   */
+  public debug(message: string, context?: unknown): void {
     if (this.shouldLog(LogLevel.DEBUG)) {
       const formattedContext = this.processUnknown(context);
       console.debug(
@@ -160,7 +220,14 @@ export class Logger implements ILogger {
     }
   }
 
-  verbose(message: string, context?: unknown): void {
+  /**
+   * Logs a verbose message to the console, providing maximum detail.
+   * @param message - The verbose message.
+   * @param context - Optional additional context.
+   * @example
+   * logger.verbose('Entering verbose logging mode');
+   */
+  public verbose(message: string, context?: unknown): void {
     if (this.shouldLog(LogLevel.VERBOSE)) {
       const formattedContext = this.processUnknown(context);
       console.log(

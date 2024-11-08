@@ -575,7 +575,7 @@ import { TektonClient, TektonClientError } from '@sailfin/tekton';
 
 ## Logging
 
-The package includes a robust logging system with configurable log levels. By default, the log level is set to **INFO**, but it can be adjusted as needed.
+The `KubernetesClient` class includes a robust logging system with configurable log levels. By default, the log level is set to **INFO**, but it can be adjusted by passing a logLevel option when creating the client instance.
 
 ### Log Levels
 
@@ -595,10 +595,10 @@ The log level can be configured using the `setLogLevel` method:
 import { KubernetesClient, LogLevel } from '@sailfin/tekton';
 
 (async () => {
-  const k8sClient = await KubernetesClient.create();
-
-  // Set log level to DEBUG
-  k8sClient.logger.setLogLevel(LogLevel.DEBUG);
+  // Create KubernetesClient with DEBUG log level
+  const k8sClient = await KubernetesClient.create({
+    logLevel: LogLevel.DEBUG,
+  });
 
   // Now, DEBUG and above logs will be emitted
 })();
