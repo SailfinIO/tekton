@@ -2,14 +2,14 @@
 
 import { request, RequestOptions } from 'https';
 import { URL } from 'url';
-import { ResolvedKubeConfig, KubernetesResource, WatchEvent } from './models';
-import { KubeConfigReader } from './utils';
-import { Logger } from './utils';
+import { ResolvedKubeConfig, KubernetesResource, WatchEvent } from '../models';
+import { KubeConfigReader } from '../utils';
+import { Logger } from '../utils';
 import { readFileSync } from 'fs';
-import { ApiError } from './errors';
-import { IKubernetesClient, KubernetesClientOptions } from './interfaces';
+import { ApiError } from '../errors';
+import { IKubernetesClient, KubernetesClientOptions } from '../interfaces';
 import { Readable } from 'stream';
-import { LogLevel } from './enums';
+import { HttpStatus, LogLevel } from '../enums';
 
 export class KubernetesClient implements IKubernetesClient {
   private kubeConfig: ResolvedKubeConfig;
@@ -40,33 +40,37 @@ export class KubernetesClient implements IKubernetesClient {
     let kubeConfig: ResolvedKubeConfig | null = null;
 
     if (kubeConfigPath) {
-      reader.logger.info(
+      KubeConfigReader.logger.info(
         `Attempting to load kubeconfig from path: ${kubeConfigPath}`,
       );
       // Attempt to load from the specified kubeConfigPath
       kubeConfig = await reader.getKubeConfig();
       if (!kubeConfig) {
-        reader.logger.error(
+        KubeConfigReader.logger.error(
           `Failed to load kubeconfig from path: ${kubeConfigPath}`,
         );
         throw new Error(
           `Failed to load kubeconfig from path: ${kubeConfigPath}`,
         );
       }
-      reader.logger.info(`Loaded kube config from path: ${kubeConfigPath}`);
+      KubeConfigReader.logger.info(
+        `Loaded kube config from path: ${kubeConfigPath}`,
+      );
     } else {
-      reader.logger.info('Attempting to load kubeconfig from default path.');
+      KubeConfigReader.logger.info(
+        'Attempting to load kubeconfig from default path.',
+      );
       // Attempt to load from the default kubeconfig path
       kubeConfig = await reader.getKubeConfig();
       if (kubeConfig) {
-        reader.logger.info('Loaded kube config from default path.');
+        KubeConfigReader.logger.info('Loaded kube config from default path.');
       } else {
-        reader.logger.warn(
+        KubeConfigReader.logger.warn(
           'Default kube config not found. Attempting to load in-cluster config.',
         );
         // Fallback to in-cluster configuration
         kubeConfig = await reader.getInClusterConfig();
-        reader.logger.info('Loaded in-cluster kube config.');
+        KubeConfigReader.logger.info('Loaded in-cluster kube config.');
       }
     }
 
@@ -190,7 +194,7 @@ export class KubernetesClient implements IKubernetesClient {
                 );
                 reject(
                   new ApiError(
-                    res.statusCode || 500,
+                    res.statusCode || HttpStatus.INTERNAL_SERVER_ERROR,
                     `Request failed with status code ${res.statusCode}`,
                     data,
                   ),

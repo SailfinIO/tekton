@@ -5,8 +5,12 @@ const config: Config = {
   preset: 'ts-jest',
   testEnvironment: 'node',
   rootDir: './',
-  testMatch: ['<rootDir>/tests/e2e/**/*.e2e.spec.ts'],
+
+  // Adjust testMatch if E2E tests have moved
+  testMatch: ['<rootDir>/e2e/**/*.e2e.spec.ts'],
+
   collectCoverage: false,
+
   transform: {
     '^.+\\.(ts|tsx)$': [
       'ts-jest',

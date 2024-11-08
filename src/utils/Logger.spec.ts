@@ -1,7 +1,7 @@
-// tests/unit/utils/Logger.spec.ts
+// tests/unit/Logger.spec.ts
 
-import { Logger } from '../../src/utils/Logger';
-import { LogLevel } from '../../src/enums';
+import { Logger } from './Logger';
+import { LogLevel } from '../enums';
 
 describe('Logger', () => {
   let logger: Logger;

@@ -5,3 +5,4 @@
 
 export * from './ResourceTypes';
 export * from './LogLevel';
+export * from './HttpStatus';

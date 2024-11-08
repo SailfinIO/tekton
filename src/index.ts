@@ -1,8 +1,7 @@
 /**
- * @fileoverview Central export file for the Kubernetes and Tekton clients
+ * @fileoverview Central export file for all classes, interfaces, and types.
  */
-export { TektonClient } from './TektonClient';
-export { KubernetesClient } from './KubernetesClient';
+export * from './clients';
 export * from './enums';
 export * from './interfaces';
 export * from './models';
