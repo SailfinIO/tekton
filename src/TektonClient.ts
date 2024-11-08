@@ -1,6 +1,11 @@
 import { IKubernetesClient } from './interfaces/IKubernetesClient';
 import { KubernetesClient } from './KubernetesClient';
-import { ITektonClient, GetOptions, ListOptions } from './interfaces';
+import {
+  ITektonClient,
+  GetOptions,
+  ListOptions,
+  TektonClientOptions,
+} from './interfaces';
 import { Logger } from './utils/Logger';
 import {
   ClusterTask,
@@ -12,6 +17,7 @@ import {
   WatchEvent,
 } from './models';
 import { TektonClientError } from './errors';
+import { LogLevel } from './enums';
 
 export class TektonClient implements ITektonClient {
   private k8sClient: IKubernetesClient;
@@ -20,27 +26,33 @@ export class TektonClient implements ITektonClient {
   /**
    * Private constructor to enforce the use of the async factory method.
    * @param k8sClient Instance of IKubernetesClient.
+   * @param logLevel Desired log level.
    */
-  private constructor(k8sClient: IKubernetesClient) {
+  private constructor(
+    k8sClient: IKubernetesClient,
+    logLevel: LogLevel = LogLevel.INFO,
+  ) {
     this.k8sClient = k8sClient;
+    this.logger = new Logger(TektonClient.name, logLevel);
   }
 
   /**
    * Static factory method to create an instance of TektonClient.
-   * @param kubeConfigPath Optional path to kubeconfig file.
-   * @param k8sClient Optional custom Kubernetes client.
+   * @param options Optional configuration options including kubeConfigPath, logLevel, and k8sClient.
    */
   public static async create(
-    kubeConfigPath?: string,
-    k8sClient?: IKubernetesClient,
+    options?: TektonClientOptions,
   ): Promise<TektonClient> {
+    const { kubeConfigPath, logLevel, k8sClient } = options || {};
     let client: IKubernetesClient;
+
     if (k8sClient) {
       client = k8sClient;
     } else {
-      client = await KubernetesClient.create(kubeConfigPath);
+      client = await KubernetesClient.create({ kubeConfigPath, logLevel });
     }
-    return new TektonClient(client);
+
+    return new TektonClient(client, logLevel);
   }
 
   public async getPipeline(
