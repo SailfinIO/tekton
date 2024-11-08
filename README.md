@@ -631,7 +631,7 @@ Please ensure your code adheres to the project's coding standards and includes a
 
 ## Support
 
-For support, please (open an issue)[https://github.com/SailfinIO/tekton/issues] on the GitHub Issues page or contact the maintainers directly.
+For support, please [open an issue](https://github.com/SailfinIO/tekton/issues) on the GitHub Issues page or contact the maintainers directly.
 
 ## License
 
