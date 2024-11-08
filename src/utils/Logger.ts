@@ -1,4 +1,4 @@
-import { ILogger } from '../interfaces';
+import { ILogger } from '../interfaces/Ilogger';
 import { LogLevel } from '../enums';
 import { ColorCodes, ResetCode } from './ColorCodes';
 
