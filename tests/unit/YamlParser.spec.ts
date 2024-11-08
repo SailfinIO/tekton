@@ -1,7 +1,7 @@
 // tests/YamlParser.test.ts
 
-import { ParsingError } from '../src/errors';
-import { YamlParser } from '../src/utils/YamlParser';
+import { ParsingError } from '../../src/errors/ParsingError';
+import { YamlParser } from '../../src/utils/YamlParser';
 
 describe('YamlParser', () => {
   it('should parse a simple YAML string into an object', () => {
