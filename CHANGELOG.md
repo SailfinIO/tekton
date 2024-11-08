@@ -1,3 +1,15 @@
+## [1.0.6](https://github.com/SailfinIO/tekton/compare/v1.0.5...v1.0.6) (2024-11-08)
+
+
+### Bug Fixes
+
+* comment Ilogger to trigger build ([baf2b1a](https://github.com/SailfinIO/tekton/commit/baf2b1a2a6f052442a0a1472ab9bb3f74f10f6a5))
+* comment logger export for now ([a0adab3](https://github.com/SailfinIO/tekton/commit/a0adab3424498dfbdcfdded6cff2a08b2a6ea2bb))
+* enable log level in client instantiation ([9e5c3e1](https://github.com/SailfinIO/tekton/commit/9e5c3e1bde1eca2f123d3bfe10820edcd260faa8))
+* export ILogger ([7f2eeff](https://github.com/SailfinIO/tekton/commit/7f2eeff10725076bf276e47d9e1d6abcad4cd3ae))
+* logger import ([0cf45cd](https://github.com/SailfinIO/tekton/commit/0cf45cd7038dcfbe777592614b5bf2b19b0328b4))
+* logger name ([1e39a75](https://github.com/SailfinIO/tekton/commit/1e39a7530c03a627d23aafe6418b5c6b130e5c5c))
+
 ## [1.0.5](https://github.com/SailfinIO/tekton/compare/v1.0.4...v1.0.5) (2024-11-08)
 
 
