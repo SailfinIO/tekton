@@ -1,5 +1,6 @@
-// src/index.ts
-
+/**
+ * @fileoverview Central export file for the Kubernetes and Tekton clients
+ */
 export { TektonClient } from './TektonClient';
 export { KubernetesClient } from './KubernetesClient';
 export * from './enums';
