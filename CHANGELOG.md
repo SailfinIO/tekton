@@ -1,3 +1,10 @@
+## [1.0.8](https://github.com/SailfinIO/tekton/compare/v1.0.7...v1.0.8) (2024-11-09)
+
+
+### Bug Fixes
+
+* add sonar token ([68b4202](https://github.com/SailfinIO/tekton/commit/68b42020fc028b051a3c74970187bf51aa54c116))
+
 ## [1.0.7](https://github.com/SailfinIO/tekton/compare/v1.0.6...v1.0.7) (2024-11-09)
 
 
