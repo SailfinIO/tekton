@@ -4,6 +4,11 @@
 ![npm version](https://img.shields.io/npm/v/@sailfin/tekton.svg)
 [![CodeQL Advanced](https://github.com/SailfinIO/tekton/actions/workflows/codeql.yml/badge.svg)](https://github.com/SailfinIO/tekton/actions/workflows/codeql.yml)
 [![Build](https://github.com/SailfinIO/tekton/actions/workflows/build.yaml/badge.svg)](https://github.com/SailfinIO/tekton/actions/workflows/build.yaml)
+[![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=SailfinIO_tekton&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=SailfinIO_tekton)
+[![Coverage](https://sonarcloud.io/api/project_badges/measure?project=SailfinIO_tekton&metric=coverage)](https://sonarcloud.io/summary/new_code?id=SailfinIO_tekton)
+[![Security Rating](https://sonarcloud.io/api/project_badges/measure?project=SailfinIO_tekton&metric=security_rating)](https://sonarcloud.io/summary/new_code?id=SailfinIO_tekton)
+[![Reliability Rating](https://sonarcloud.io/api/project_badges/measure?project=SailfinIO_tekton&metric=reliability_rating)](https://sonarcloud.io/summary/new_code?id=SailfinIO_tekton)
+[![Vulnerabilities](https://sonarcloud.io/api/project_badges/measure?project=SailfinIO_tekton&metric=vulnerabilities)](https://sonarcloud.io/summary/new_code?id=SailfinIO_tekton)
 
 `@sailfin/tekton` is a robust, enterprise-grade NPM package that provides seamless integration with Tekton and Kubernetes. It offers powerful clients for interacting with Tekton pipelines and Kubernetes resources, enabling developers and DevOps engineers to automate and manage their CI/CD workflows with ease.
 

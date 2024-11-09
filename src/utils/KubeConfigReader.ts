@@ -11,6 +11,7 @@ import {
 } from '../errors';
 import { IFileSystem, ILogger } from '../interfaces';
 import { FileSystem } from './FileSystem';
+import { PemUtils } from './PemUtils';
 
 export class KubeConfigReader {
   private kubeConfigPath: string;
@@ -47,6 +48,13 @@ export class KubeConfigReader {
     }
   }
 
+  private validateAndConvertPem(data: string, type: string): Buffer {
+    if (!PemUtils.isValidPem(data, type)) {
+      throw new InvalidConfigError(`Invalid PEM format for ${type}.`);
+    }
+    return PemUtils.pemToBuffer(data, type);
+  }
+
   public async getKubeConfig(): Promise<ResolvedKubeConfig> {
     try {
       const fileContent = await this.fileSystem.readFile(
@@ -61,7 +69,7 @@ export class KubeConfigReader {
         KubeConfigReader.logger.error(
           'No currentContext is set in kubeconfig.',
         );
-        throw new InvalidConfigError('No currentContext is set in kubeconfig.');
+        null;
       }
 
       const currentContextName = config.currentContext;
@@ -103,6 +111,61 @@ export class KubeConfigReader {
           `User '${context.user}' not found in kubeconfig.`,
         );
         return null;
+      }
+
+      // Handle PEM-encoded data
+      if (user.clientCertificateData) {
+        try {
+          const certBuffer = this.validateAndConvertPem(
+            user.clientCertificateData,
+            'CERTIFICATE',
+          );
+          // Convert Buffer back to base64 string if needed
+          user.clientCertificateData = certBuffer.toString('base64');
+        } catch (error) {
+          KubeConfigReader.logger.error(
+            `Invalid clientCertificateData: ${(error as Error).message}`,
+          );
+          throw new InvalidConfigError(
+            `Invalid clientCertificateData: ${(error as Error).message}`,
+          );
+        }
+      }
+
+      if (user.clientKeyData) {
+        try {
+          const keyBuffer = this.validateAndConvertPem(
+            user.clientKeyData,
+            'PRIVATE KEY',
+          );
+          // Convert Buffer back to base64 string if needed
+          user.clientKeyData = keyBuffer.toString('base64');
+        } catch (error) {
+          KubeConfigReader.logger.error(
+            `Invalid clientKeyData: ${(error as Error).message}`,
+          );
+          throw new InvalidConfigError(
+            `Invalid clientKeyData: ${(error as Error).message}`,
+          );
+        }
+      }
+
+      if (cluster.certificateAuthorityData) {
+        try {
+          const caBuffer = this.validateAndConvertPem(
+            cluster.certificateAuthorityData,
+            'CERTIFICATE',
+          );
+          // Convert Buffer back to base64 string if needed
+          cluster.certificateAuthorityData = caBuffer.toString('base64');
+        } catch (error) {
+          KubeConfigReader.logger.error(
+            `Invalid certificateAuthorityData: ${(error as Error).message}`,
+          );
+          throw new InvalidConfigError(
+            `Invalid certificateAuthorityData: ${(error as Error).message}`,
+          );
+        }
       }
 
       return {

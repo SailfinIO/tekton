@@ -1,4 +1,4 @@
-// src/utils/KubeConfigReader.spec.ts
+// src/utils/KubeConfigReader.test.ts
 
 import { IFileSystem } from '../interfaces';
 import { KubeConfigReader } from './KubeConfigReader';
@@ -117,25 +117,75 @@ describe('KubeConfigReader', () => {
    */
   describe('getKubeConfig', () => {
     it('should successfully read and parse kubeconfig, returning ResolvedKubeConfig', async () => {
-      // Mock file content
-      const kubeConfigContent = `
-        apiVersion: v1
-        clusters:
-          - cluster:
-              server: https://1.2.3.4
-              certificate-authority-data: abc123
-            name: cluster1
-        contexts:
-          - context:
-              cluster: cluster1
-              user: user1
-            name: context1
-        current-context: context1
-        users:
-          - name: user1
-            user:
-              token: mytoken
+      const validPemCertificate = `-----BEGIN CERTIFICATE-----
+      MIIDdzCCAl+gAwIBAgIEbVYt0TANBgkqhkiG9w0BAQsFADBvMQswCQYDVQQGEwJV
+      UzELMAkGA1UECAwCTlkxCzAJBgNVBAcMAk5ZMQswCQYDVQQKDAJOWTELMAkGA1UE
+      CwwCTlkxCzAJBgNVBAMMAk5ZMB4XDTIxMDYxNTEyMjUyMVoXDTMxMDYxMzEyMjUy
+      MVowbzELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAk5ZMQswCQYDVQQHDAJOWTELMAkG
+      A1UECgwCTlkxCzAJBgNVBAsMAk5ZMQswCQYDVQQDDAJOWTCCASIwDQYJKoZIhvcN
+      AQEBBQADggEPADCCAQoCggEBALw6NcMmsNqMYYGnIXJHjY58U0VThfqfzbjJGpYq
+      ...
+      -----END CERTIFICATE-----`;
+
+      const validPemPrivateKey = `-----BEGIN PRIVATE KEY-----
+      MIIEvQIBADANBgkqhkiG9w0BAQEFAASC...
+      -----END PRIVATE KEY-----`;
+
+      const kubeconfigYaml = `
+      apiVersion: v1
+      clusters:
+        - name: test-cluster
+          cluster:
+            server: https://localhost:6443
+            certificate-authority-data: |
+              ${validPemCertificate}
+      contexts:
+        - name: test-context
+          context:
+            cluster: test-cluster
+            user: test-user
+      current-context: test-context
+      users:
+        - name: test-user
+          user:
+            client-certificate-data: |
+              ${validPemCertificate}
+            client-key-data: |
+              ${validPemPrivateKey}
       `;
+
+      const kubeconfig = {
+        apiVersion: 'v1',
+        clusters: [
+          {
+            name: 'test-cluster',
+            cluster: {
+              server: 'https://localhost:6443',
+              certificateAuthorityData: validPemCertificate,
+            },
+          },
+        ],
+        contexts: [
+          {
+            name: 'test-context',
+            context: {
+              cluster: 'test-cluster',
+              user: 'test-user',
+            },
+          },
+        ],
+        currentContext: 'test-context',
+        users: [
+          {
+            name: 'test-user',
+            user: {
+              clientCertificateData: validPemCertificate,
+              clientKeyData: validPemPrivateKey,
+            },
+          },
+        ],
+      };
+
       const mockKubeConfigPath = '/mock/.kube/config';
       // Mock FileSystem to return the kubeConfigContent
       mockFileSystem.readFile = jest
@@ -143,11 +193,11 @@ describe('KubeConfigReader', () => {
         .mockImplementation((path: string, encoding?: BufferEncoding) => {
           if (encoding === 'utf8') {
             if (path === mockKubeConfigPath) {
-              return Promise.resolve(kubeConfigContent);
+              return Promise.resolve(kubeconfigYaml);
             }
           } else {
             if (path === mockKubeConfigPath) {
-              return Promise.resolve(Buffer.from(kubeConfigContent));
+              return Promise.resolve(Buffer.from(kubeconfigYaml));
             }
           }
           return Promise.reject(
@@ -155,8 +205,35 @@ describe('KubeConfigReader', () => {
           );
         }) as jest.MockedFunction<IFileSystem['readFile']>;
 
-      // Mock YamlParser.parse to return the parsed object
-      const parsedConfig = {
+      mockedYamlParser.parse.mockReturnValue(kubeconfig);
+
+      const expectedResolvedConfig: ResolvedKubeConfig = {
+        cluster: {
+          server: 'https://localhost:6443',
+          certificateAuthorityData:
+            'MIIDdzCCAl+gAwIBAgIEbVYt0TANBgkqhkiG9w0BAQsFADBvMQswCQYDVQQGEwJVUzELMAkGA1UECAwCTlkxCzAJBgNVBAcMAk5ZMQswCQYDVQQKDAJOWTELMAkGA1UECwwCTlkxCzAJBgNVBAMMAk5ZMB4XDTIxMDYxNTEyMjUyMVoXDTMxMDYxMzEyMjUyMVowbzELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAk5ZMQswCQYDVQQHDAJOWTELMAkGA1UECgwCTlkxCzAJBgNVBAsMAk5ZMQswCQYDVQQDDAJOWTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBALw6NcMmsNqMYYGnIXJHjY58U0VThfqfzbjJGpYq',
+        },
+        user: {
+          clientCertificateData:
+            'MIIDdzCCAl+gAwIBAgIEbVYt0TANBgkqhkiG9w0BAQsFADBvMQswCQYDVQQGEwJVUzELMAkGA1UECAwCTlkxCzAJBgNVBAcMAk5ZMQswCQYDVQQKDAJOWTELMAkGA1UECwwCTlkxCzAJBgNVBAMMAk5ZMB4XDTIxMDYxNTEyMjUyMVoXDTMxMDYxMzEyMjUyMVowbzELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAk5ZMQswCQYDVQQHDAJOWTELMAkGA1UECgwCTlkxCzAJBgNVBAsMAk5ZMQswCQYDVQQDDAJOWTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBALw6NcMmsNqMYYGnIXJHjY58U0VThfqfzbjJGpYq',
+          clientKeyData: 'MIIEvQIBADANBgkqhkiG9w0BAQEFAASC',
+        },
+      };
+
+      const result = await kubeConfigReader.getKubeConfig();
+
+      expect(mockFileSystem.readFile).toHaveBeenCalledWith(
+        kubeConfigReader['kubeConfigPath'],
+        'utf8',
+      );
+      expect(YamlParser.parse).toHaveBeenCalledWith(kubeconfigYaml);
+      expect(mockedLoggerInstance.error).not.toHaveBeenCalled();
+      expect(mockedLoggerInstance.warn).not.toHaveBeenCalled();
+      expect(result).toEqual(expectedResolvedConfig);
+    });
+
+    it('should return null and log an error if currentContextName is empty', async () => {
+      const kubeConfigWithEmptyCurrentContext = {
         apiVersion: 'v1',
         clusters: [
           {
@@ -176,7 +253,7 @@ describe('KubeConfigReader', () => {
             },
           },
         ],
-        currentContext: 'context1', // Adjusted to camelCase based on mapKeys
+        currentContext: '', // Set to an empty context
         users: [
           {
             name: 'user1',
@@ -187,28 +264,159 @@ describe('KubeConfigReader', () => {
         ],
       };
 
-      mockedYamlParser.parse.mockReturnValue(parsedConfig);
-
-      const expectedResolvedConfig: ResolvedKubeConfig = {
-        cluster: {
-          server: 'https://1.2.3.4',
-          certificateAuthorityData: 'abc123',
-        },
-        user: {
-          token: 'mytoken',
-        },
-      };
+      // Mock YamlParser.parse to return the kubeConfig with empty currentContext
+      mockedYamlParser.parse.mockReturnValue(kubeConfigWithEmptyCurrentContext);
 
       const result = await kubeConfigReader.getKubeConfig();
 
       expect(mockFileSystem.readFile).toHaveBeenCalledWith(
-        kubeConfigReader['kubeConfigPath'],
+        mockKubeConfigPath,
         'utf8',
       );
       expect(YamlParser.parse).toHaveBeenCalledWith(kubeConfigContent);
-      expect(mockedLoggerInstance.error).not.toHaveBeenCalled();
-      expect(mockedLoggerInstance.warn).not.toHaveBeenCalled();
-      expect(result).toEqual(expectedResolvedConfig);
+      expect(mockedLoggerInstance.error).toHaveBeenCalledWith(
+        `No currentContext is set in kubeconfig.`,
+      );
+      expect(result).toBeNull();
+    });
+
+    it('should throw InvalidConfigError if clientCertificateData is invalid PEM', async () => {
+      const kubeConfigWithInvalidCert = {
+        apiVersion: 'v1',
+        clusters: [
+          {
+            name: 'cluster1',
+            cluster: {
+              server: 'https://1.2.3.4',
+              certificateAuthorityData: 'abc123',
+            },
+          },
+        ],
+        contexts: [
+          {
+            name: 'context1',
+            context: {
+              cluster: 'cluster1',
+              user: 'user1',
+            },
+          },
+        ],
+        currentContext: 'context1',
+        users: [
+          {
+            name: 'user1',
+            user: {
+              clientCertificateData: 'invalid-pem-data', // Invalid PEM
+              clientKeyData: 'valid-client-key',
+            },
+          },
+        ],
+      };
+
+      // Mock YamlParser.parse to return the invalid kubeConfig
+      mockedYamlParser.parse.mockReturnValue(kubeConfigWithInvalidCert);
+
+      await expect(kubeConfigReader.getKubeConfig()).rejects.toThrow(
+        InvalidConfigError,
+      );
+
+      expect(mockedLoggerInstance.error).toHaveBeenCalledWith(
+        'Invalid clientCertificateData: Invalid PEM format for CERTIFICATE.',
+      );
+    });
+
+    it('should throw InvalidConfigError if clientKeyData is invalid PEM', async () => {
+      const validPemCertificate = `-----BEGIN CERTIFICATE-----
+      MIIDdzCCAl+gAwIBAgIEbVYt0TANBgkqhkiG9w0BAQsFADBvMQswCQYDVQQGEwJV
+      UzELMAkGA1UECAwCTlkxCzAJBgNVBAcMAk5ZMQswCQYDVQQKDAJOWTELMAkGA1UE
+      ...
+      -----END CERTIFICATE-----`;
+      const kubeConfigWithInvalidKey = {
+        apiVersion: 'v1',
+        clusters: [
+          {
+            name: 'cluster1',
+            cluster: {
+              server: 'https://1.2.3.4',
+              certificateAuthorityData: 'abc123',
+            },
+          },
+        ],
+        contexts: [
+          {
+            name: 'context1',
+            context: {
+              cluster: 'cluster1',
+              user: 'user1',
+            },
+          },
+        ],
+        currentContext: 'context1',
+        users: [
+          {
+            name: 'user1',
+            user: {
+              clientCertificateData: validPemCertificate,
+              clientKeyData: 'invalid-pem-key', // Invalid PEM
+            },
+          },
+        ],
+      };
+
+      // Mock YamlParser.parse to return the invalid kubeConfig
+      mockedYamlParser.parse.mockReturnValue(kubeConfigWithInvalidKey);
+
+      await expect(kubeConfigReader.getKubeConfig()).rejects.toThrow(
+        InvalidConfigError,
+      );
+
+      expect(mockedLoggerInstance.error).toHaveBeenCalledWith(
+        'Invalid clientKeyData: Invalid PEM format for PRIVATE KEY.',
+      );
+    });
+
+    it('should throw InvalidConfigError if certificateAuthorityData is invalid PEM', async () => {
+      const kubeConfigWithInvalidCA = {
+        apiVersion: 'v1',
+        clusters: [
+          {
+            name: 'cluster1',
+            cluster: {
+              server: 'https://1.2.3.4',
+              certificateAuthorityData: 'invalid-pem-ca', // Invalid PEM
+            },
+          },
+        ],
+        contexts: [
+          {
+            name: 'context1',
+            context: {
+              cluster: 'cluster1',
+              user: 'user1',
+            },
+          },
+        ],
+        currentContext: 'context1',
+        users: [
+          {
+            name: 'user1',
+            user: {
+              token: 'mytoken',
+            },
+          },
+        ],
+      };
+
+      // Mock YamlParser.parse to return the invalid kubeConfig
+      mockedYamlParser.parse.mockReturnValue(kubeConfigWithInvalidCA);
+
+      await expect(kubeConfigReader.getKubeConfig()).rejects.toThrow(
+        InvalidConfigError,
+      );
+
+      expect(mockedLoggerInstance.error).toHaveBeenCalledWith(
+        'Invalid certificateAuthorityData: Invalid PEM format for CERTIFICATE.',
+      );
     });
 
     it('should throw ConfigFileNotFoundError if kubeconfig file does not exist', async () => {
@@ -279,84 +487,6 @@ describe('KubeConfigReader', () => {
       expect(YamlParser.parse).toHaveBeenCalledWith(invalidYamlContent);
       expect(mockedLoggerInstance.error).not.toHaveBeenCalled();
       expect(mockedLoggerInstance.warn).not.toHaveBeenCalled();
-    });
-
-    it('should throw InvalidConfigError if currentContext is not set in kubeconfig', async () => {
-      const mockKubeConfigPath = '/mock/.kube/config';
-      const kubeConfigContent = `
-        apiVersion: v1
-        clusters:
-          - cluster:
-              server: https://1.2.3.4
-              certificate-authority-data: abc123
-            name: cluster1
-        contexts:
-          - context:
-              cluster: cluster1
-              user: user1
-            name: context1
-        users:
-          - name: user1
-            user:
-              token: mytoken
-      `;
-
-      // Update the mock to return kubeConfigContent when 'utf8' is specified
-      (mockFileSystem.readFile as jest.Mock).mockImplementation(
-        (path: string, encoding?: BufferEncoding): Promise<string | Buffer> => {
-          if (encoding === 'utf8' && path === mockKubeConfigPath) {
-            return Promise.resolve(kubeConfigContent); // Return string
-          }
-          return Promise.resolve(Buffer.from(kubeConfigContent)); // Return Buffer for other cases
-        },
-      );
-
-      // Mock YamlParser.parse to return parsed config without currentContext
-      const parsedConfig = {
-        apiVersion: 'v1',
-        clusters: [
-          {
-            name: 'cluster1',
-            cluster: {
-              server: 'https://1.2.3.4',
-              certificateAuthorityData: 'abc123',
-            },
-          },
-        ],
-        contexts: [
-          {
-            name: 'context1',
-            context: {
-              cluster: 'cluster1',
-              user: 'user1',
-            },
-          },
-        ],
-        // currentContext is missing
-        users: [
-          {
-            name: 'user1',
-            user: {
-              token: 'mytoken',
-            },
-          },
-        ],
-      };
-
-      mockedYamlParser.parse.mockReturnValue(parsedConfig);
-
-      await expect(kubeConfigReader.getKubeConfig()).rejects.toThrow(
-        InvalidConfigError,
-      );
-
-      expect(mockFileSystem.readFile).toHaveBeenCalledWith(
-        mockKubeConfigPath,
-        'utf8',
-      );
-      expect(YamlParser.parse).toHaveBeenCalledWith(kubeConfigContent);
-      expect(mockedLoggerInstance.error).toHaveBeenCalledWith(
-        `No currentContext is set in kubeconfig.`,
-      );
     });
 
     it('should return null and log an error if currentContext does not match any context', async () => {
@@ -634,12 +764,186 @@ describe('KubeConfigReader', () => {
         `Unexpected error: Permission denied`,
       );
     });
+
+    it('should return null and log an error if no contexts are defined', async () => {
+      const kubeConfigWithoutContexts = {
+        apiVersion: 'v1',
+        clusters: [
+          {
+            name: 'cluster1',
+            cluster: {
+              server: 'https://1.2.3.4',
+              certificateAuthorityData: 'abc123',
+            },
+          },
+        ],
+        contexts: [],
+        currentContext: 'context1', // Invalid because no contexts are defined
+        users: [
+          {
+            name: 'user1',
+            user: {
+              token: 'mytoken',
+            },
+          },
+        ],
+      };
+
+      mockedYamlParser.parse.mockReturnValue(kubeConfigWithoutContexts);
+
+      const result = await kubeConfigReader.getKubeConfig();
+
+      expect(mockFileSystem.readFile).toHaveBeenCalledWith(
+        mockKubeConfigPath,
+        'utf8',
+      );
+      expect(mockedLoggerInstance.error).toHaveBeenCalledWith(
+        `Context 'context1' not found in kubeconfig.`,
+      );
+      expect(result).toBeNull();
+    });
+
+    it('should return null and log an error if cluster is not found', async () => {
+      const kubeConfigWithoutClusters = {
+        apiVersion: 'v1',
+        clusters: [],
+        contexts: [
+          {
+            name: 'context1',
+            context: {
+              cluster: 'missingCluster',
+              user: 'user1',
+            },
+          },
+        ],
+        currentContext: 'context1',
+        users: [
+          {
+            name: 'user1',
+            user: {
+              token: 'mytoken',
+            },
+          },
+        ],
+      };
+
+      mockedYamlParser.parse.mockReturnValue(kubeConfigWithoutClusters);
+
+      const result = await kubeConfigReader.getKubeConfig();
+
+      expect(mockFileSystem.readFile).toHaveBeenCalledWith(
+        mockKubeConfigPath,
+        'utf8',
+      );
+      expect(mockedLoggerInstance.error).toHaveBeenCalledWith(
+        `Cluster 'missingCluster' not found in kubeconfig.`,
+      );
+      expect(result).toBeNull();
+    });
+
+    it('should return null and log an error if user is not found', async () => {
+      const kubeConfigWithoutUser = {
+        apiVersion: 'v1',
+        clusters: [
+          {
+            name: 'cluster1',
+            cluster: {
+              server: 'https://1.2.3.4',
+              certificateAuthorityData: 'abc123',
+            },
+          },
+        ],
+        contexts: [
+          {
+            name: 'context1',
+            context: {
+              cluster: 'cluster1',
+              user: 'missingUser',
+            },
+          },
+        ],
+        currentContext: 'context1',
+        users: [],
+      };
+
+      mockedYamlParser.parse.mockReturnValue(kubeConfigWithoutUser);
+
+      const result = await kubeConfigReader.getKubeConfig();
+
+      expect(mockFileSystem.readFile).toHaveBeenCalledWith(
+        mockKubeConfigPath,
+        'utf8',
+      );
+      expect(mockedLoggerInstance.error).toHaveBeenCalledWith(
+        `User 'missingUser' not found in kubeconfig.`,
+      );
+      expect(result).toBeNull();
+    });
   });
 
   /**
    * Test Cases for getInClusterConfig
    */
   describe('getInClusterConfig', () => {
+    it('should throw an error if environment variables are missing', async () => {
+      delete process.env.KUBERNETES_SERVICE_HOST;
+      delete process.env.KUBERNETES_SERVICE_PORT;
+
+      mockFileSystem.access.mockResolvedValue(undefined);
+
+      await expect(kubeConfigReader.getInClusterConfig()).rejects.toThrow(
+        'KUBERNETES_SERVICE_HOST or KUBERNETES_SERVICE_PORT environment variables are not set.',
+      );
+
+      expect(mockedLoggerInstance.error).toHaveBeenCalledWith(
+        'Not running inside a Kubernetes cluster.',
+      );
+    });
+
+    it('should throw an error if file read fails due to unexpected reason', async () => {
+      process.env.KUBERNETES_SERVICE_HOST = '10.0.0.1';
+      process.env.KUBERNETES_SERVICE_PORT = '443';
+
+      const genericError = new Error('Permission denied');
+      (genericError as any).code = 'EACCES';
+      mockFileSystem.readFile.mockRejectedValue(genericError);
+
+      await expect(kubeConfigReader.getInClusterConfig()).rejects.toThrow(
+        'Failed to read file at /var/run/secrets/kubernetes.io/serviceaccount/token: Permission denied',
+      );
+
+      expect(mockedLoggerInstance.error).toHaveBeenCalledWith(
+        'Failed to read file at /var/run/secrets/kubernetes.io/serviceaccount/token: Permission denied',
+      );
+    });
+
+    it('should throw an error if CA certificate is empty', async () => {
+      process.env.KUBERNETES_SERVICE_HOST = '10.0.0.1';
+      process.env.KUBERNETES_SERVICE_PORT = '443';
+
+      mockFileSystem.access.mockResolvedValue(undefined);
+
+      (mockFileSystem.readFile as jest.Mock).mockImplementation(
+        (filePath: string) => {
+          if (
+            filePath === '/var/run/secrets/kubernetes.io/serviceaccount/ca.crt'
+          ) {
+            return Promise.resolve(Buffer.alloc(0)); // Empty buffer for CA certificate
+          } else {
+            return Promise.resolve('data');
+          }
+        },
+      );
+
+      await expect(kubeConfigReader.getInClusterConfig()).rejects.toThrow(
+        'In-cluster configuration loading failed: CA certificate data is empty.',
+      );
+
+      expect(mockedLoggerInstance.error).toHaveBeenCalledWith(
+        'CA certificate data is empty.',
+      );
+    });
+
     it('should successfully read in-cluster config and return ResolvedKubeConfig', async () => {
       // Mock environment variables to simulate in-cluster environment
       process.env.KUBERNETES_SERVICE_HOST = '10.0.0.1';
@@ -882,6 +1186,123 @@ describe('KubeConfigReader', () => {
       expect(mockedLoggerInstance.error).toHaveBeenCalledWith(
         'CA certificate data is empty.',
       );
+    });
+
+    it('should throw an error and log if not running inside a Kubernetes cluster', async () => {
+      // Mock environment variables to simulate non-cluster environment
+      delete process.env.KUBERNETES_SERVICE_HOST;
+      delete process.env.KUBERNETES_SERVICE_PORT;
+
+      // Mock fs.promises.access to throw for one or more required files
+      const enoentError = new Error('File not found');
+      (enoentError as any).code = 'ENOENT';
+      mockFileSystem.access.mockRejectedValue(enoentError);
+
+      await expect(kubeConfigReader.getInClusterConfig()).rejects.toThrow(
+        'In-cluster configuration loading failed: KUBERNETES_SERVICE_HOST or KUBERNETES_SERVICE_PORT environment variables are not set.',
+      );
+
+      expect(mockFileSystem.access).toHaveBeenCalledWith(
+        '/var/run/secrets/kubernetes.io/serviceaccount/token',
+      );
+      expect(mockFileSystem.access).toHaveBeenCalledWith(
+        '/var/run/secrets/kubernetes.io/serviceaccount/ca.crt',
+      );
+      expect(mockFileSystem.access).toHaveBeenCalledWith(
+        '/var/run/secrets/kubernetes.io/serviceaccount/namespace',
+      );
+      expect(mockedLoggerInstance.error).toHaveBeenCalledWith(
+        'Not running inside a Kubernetes cluster.',
+      );
+    });
+
+    it('should throw an error and log if certificateAuthorityData is missing or invalid', async () => {
+      // Arrange
+      process.env.KUBERNETES_SERVICE_HOST = '10.0.0.1';
+      process.env.KUBERNETES_SERVICE_PORT = '443';
+      mockFileSystem.access.mockResolvedValue(undefined);
+
+      const tokenPath = '/var/run/secrets/kubernetes.io/serviceaccount/token';
+      const caPath = '/var/run/secrets/kubernetes.io/serviceaccount/ca.crt';
+      const namespacePath =
+        '/var/run/secrets/kubernetes.io/serviceaccount/namespace';
+
+      // Mock readFile to return valid token and namespace, but invalid CA cert
+      (mockFileSystem.readFile as jest.Mock).mockImplementation(
+        (filePath: string, encoding?: BufferEncoding) => {
+          if (filePath === tokenPath && encoding === 'utf8') {
+            return Promise.resolve('mycluster-token');
+          }
+          if (filePath === caPath && !encoding) {
+            return Promise.resolve(Buffer.from('')); // Empty Buffer for CA cert
+          }
+          if (filePath === namespacePath && encoding === 'utf8') {
+            return Promise.resolve('default');
+          }
+          return Promise.reject(
+            new Error(`Unexpected readFile call with path: ${filePath}`),
+          );
+        },
+      );
+
+      // Act & Assert
+      await expect(kubeConfigReader.getInClusterConfig()).rejects.toThrow(
+        'In-cluster configuration loading failed: CA certificate data is empty.',
+      );
+
+      expect(mockedLoggerInstance.error).toHaveBeenCalledWith(
+        'CA certificate data is empty.',
+      );
+    });
+
+    it('should log a warning if namespace is missing or invalid', async () => {
+      // Arrange
+      process.env.KUBERNETES_SERVICE_HOST = '10.0.0.1';
+      process.env.KUBERNETES_SERVICE_PORT = '443';
+      mockFileSystem.access.mockResolvedValue(undefined);
+
+      const tokenPath = '/var/run/secrets/kubernetes.io/serviceaccount/token';
+      const caPath = '/var/run/secrets/kubernetes.io/serviceaccount/ca.crt';
+      const namespacePath =
+        '/var/run/secrets/kubernetes.io/serviceaccount/namespace';
+
+      // Mock readFile to return valid token and CA, but invalid namespace
+      (mockFileSystem.readFile as jest.Mock).mockImplementation(
+        (filePath: string, encoding?: BufferEncoding) => {
+          if (filePath === tokenPath && encoding === 'utf8') {
+            return Promise.resolve('mycluster-token');
+          }
+          if (filePath === caPath && !encoding) {
+            return Promise.resolve(Buffer.from('ca-cert'));
+          }
+          if (filePath === namespacePath && encoding === 'utf8') {
+            return Promise.resolve(''); // Invalid namespace
+          }
+          return Promise.reject(
+            new Error(`Unexpected readFile call with path: ${filePath}`),
+          );
+        },
+      );
+
+      const expectedResolvedConfig: ResolvedKubeConfig = {
+        cluster: {
+          server: 'https://10.0.0.1:443',
+          certificateAuthorityData: Buffer.from('ca-cert').toString('base64'),
+        },
+        user: {
+          token: 'mycluster-token',
+        },
+      };
+
+      const result = await kubeConfigReader.getInClusterConfig();
+
+      // Verify that a warning was logged
+      expect(mockedLoggerInstance.warn).toHaveBeenCalledWith(
+        'Namespace is missing or invalid.',
+      );
+
+      // Verify the result still returns the config without namespace validation
+      expect(result).toEqual(expectedResolvedConfig);
     });
 
     it('should throw an error and log if token is missing or invalid', async () => {
