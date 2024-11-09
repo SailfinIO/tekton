@@ -1,6 +1,63 @@
 import { TaskResult } from './TaskResult';
 
 /**
+ * Enum representing possible statuses for a TaskRun.
+ */
+export enum TaskRunStatusEnum {
+  /**
+   * Indicates that the TaskRun has been cancelled.
+   */
+  Cancelled = 'TaskRunCancelled',
+
+  /**
+   * Indicates that the TaskRun is pending and has not started yet.
+   */
+  Pending = 'TaskRunPending',
+
+  /**
+   * Indicates that the TaskRun was stopped intentionally.
+   */
+  Stopped = 'TaskRunStopped',
+
+  /**
+   * Indicates that the TaskRun has succeeded.
+   */
+  Succeeded = 'TaskRunSucceeded',
+
+  /**
+   * Indicates that the TaskRun has failed.
+   */
+  Failed = 'TaskRunFailed',
+
+  /**
+   * Indicates that the TaskRun is running.
+   */
+  Running = 'TaskRunRunning',
+
+  /**
+   * Indicates that the TaskRun is waiting for a resource to become available.
+   */
+  Waiting = 'TaskRunWaiting',
+
+  /**
+   * Indicates that the TaskRun has an unknown status.
+   */
+  Unknown = 'TaskRunUnknown',
+
+  /**
+   * Indicates that the TaskRun has been skipped.
+   */
+
+  Skipped = 'TaskRunSkipped',
+
+  /**
+   * Indicates that the TaskRun has been triggered.
+   */
+
+  Triggered = 'TaskRunTriggered',
+}
+
+/**
  * Represents the status of a Tekton TaskRun, providing details about its execution state, timing, and results.
  */
 export interface TaskRunStatus {
@@ -35,6 +92,11 @@ export interface TaskRunStatus {
    * Contains an array of TaskRunStatus entries, one for each retry attempt.
    */
   retriesStatus?: TaskRunStatus[];
+
+  /**
+   * The overall status of the TaskRun, combining the statuses of all steps and retries.
+   */
+  overallStatus?: TaskRunStatusEnum;
 }
 
 /**

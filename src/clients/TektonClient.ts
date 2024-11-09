@@ -12,8 +12,10 @@ import {
   Pipeline,
   PipelineResource,
   PipelineRun,
+  PipelineRunStatus,
   Task,
   TaskRun,
+  TaskStatus,
   WatchEvent,
 } from '../models';
 import { ClientError } from '../errors';
@@ -209,7 +211,31 @@ export class TektonClient implements ITektonClient {
     );
   }
 
-  // Task Operations
+  public async getPipelineRunStatus(
+    name: string,
+    namespace: string,
+  ): Promise<PipelineRunStatus> {
+    return this.executeWithLogging<PipelineRunStatus>(
+      async () => {
+        const pipelineRun = await this.getPipelineRun(name, namespace);
+        if (!pipelineRun.status) {
+          throw new ClientError(
+            `PipelineRun ${name} in namespace ${namespace} has no status.`,
+            'getPipelineRunStatus',
+            'PipelineRun',
+            namespace,
+          );
+        }
+        return pipelineRun.status;
+      },
+      `Fetching pipeline run status: ${name} in namespace: ${namespace}`,
+      `Failed to get pipeline run status ${name}`,
+      'getPipelineRunStatus',
+      'PipelineRun',
+      namespace,
+    );
+  }
+
   public async getTask(name: string, namespace: string): Promise<Task> {
     return this.executeWithLogging<Task>(
       () =>
@@ -222,6 +248,31 @@ export class TektonClient implements ITektonClient {
       `Fetching task: ${name} in namespace: ${namespace}`,
       `Failed to get task ${name}`,
       'getTask',
+      'Task',
+      namespace,
+    );
+  }
+
+  public async getTaskStatus(
+    name: string,
+    namespace: string,
+  ): Promise<TaskStatus | undefined> {
+    return this.executeWithLogging<TaskStatus>(
+      async () => {
+        const task = await this.getTask(name, namespace);
+        if (!task.status) {
+          throw new ClientError(
+            `Task ${name} in namespace ${namespace} has no status.`,
+            'getTaskStatus',
+            'Task',
+            namespace,
+          );
+        }
+        return task.status;
+      },
+      `Fetching task status: ${name} in namespace: ${namespace}`,
+      `Failed to get task status ${name}`,
+      'getTaskStatus',
       'Task',
       namespace,
     );
