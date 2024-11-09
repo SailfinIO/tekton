@@ -7,7 +7,7 @@ const config: Config = {
   rootDir: './',
 
   // Adjust testMatch if E2E tests have moved
-  testMatch: ['<rootDir>/e2e/**/*.e2e.spec.ts'],
+  testMatch: ['<rootDir>/e2e/**/*.e2e.test.ts'],
 
   collectCoverage: false,
 

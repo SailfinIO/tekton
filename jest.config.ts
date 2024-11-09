@@ -7,7 +7,7 @@ const config: Config = {
   rootDir: './',
 
   // Update testMatch to include tests alongside source files
-  testMatch: ['<rootDir>/src/**/*.spec.ts'],
+  testMatch: ['<rootDir>/src/**/*.test.ts'],
 
   collectCoverage: true,
   coverageDirectory: 'coverage',

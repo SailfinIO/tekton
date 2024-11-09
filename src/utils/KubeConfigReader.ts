@@ -9,12 +9,12 @@ import {
   InvalidConfigError,
   ParsingError,
 } from '../errors';
-import { IFileSystem } from '../interfaces';
+import { IFileSystem, ILogger } from '../interfaces';
 import { FileSystem } from './FileSystem';
 
 export class KubeConfigReader {
   private kubeConfigPath: string;
-  public static logger: Logger;
+  public static logger: ILogger;
   private fileSystem: IFileSystem;
   private yamlParser: typeof YamlParser;
 
@@ -58,6 +58,9 @@ export class KubeConfigReader {
 
       // Validate presence of required fields
       if (!config.currentContext) {
+        KubeConfigReader.logger.error(
+          'No currentContext is set in kubeconfig.',
+        );
         throw new InvalidConfigError('No currentContext is set in kubeconfig.');
       }
 
@@ -142,7 +145,7 @@ export class KubeConfigReader {
     // Helper function to read file content safely
     const safeReadFile = async (
       filePath: string,
-      encoding: BufferEncoding = 'utf8',
+      encoding?: BufferEncoding,
     ): Promise<string | Buffer> => {
       try {
         const content = await this.fileSystem.readFile(filePath, encoding);
@@ -191,13 +194,12 @@ export class KubeConfigReader {
       }
 
       const [token, ca, namespace] = await Promise.all([
-        safeReadFile(tokenPath, 'utf8'),
-        safeReadFile(caPath),
-        safeReadFile(namespacePath, 'utf8'),
+        safeReadFile(tokenPath, 'utf8'), // Read as string
+        safeReadFile(caPath), // Read as Buffer (no encoding)
+        safeReadFile(namespacePath, 'utf8'), // Read as string
       ]);
-
       // Validate token and CA
-      if (!token || typeof token !== 'string') {
+      if (!token || typeof token !== 'string' || token.trim() === '') {
         KubeConfigReader.logger.error(
           'Service account token is missing or invalid.',
         );
@@ -206,7 +208,16 @@ export class KubeConfigReader {
 
       if (!ca || !(ca instanceof Buffer)) {
         KubeConfigReader.logger.error('CA certificate is missing or invalid.');
-        throw new Error('CA certificate is missing or invalid.');
+        throw new Error(
+          'In-cluster configuration loading failed: CA certificate is missing or invalid.',
+        );
+      }
+
+      if (ca.length === 0) {
+        KubeConfigReader.logger.error('CA certificate data is empty.');
+        throw new Error(
+          'In-cluster configuration loading failed: CA certificate data is empty.',
+        );
       }
 
       // Optionally, validate namespace

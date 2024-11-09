@@ -1,6 +1,7 @@
 /**
- * @fileoverview Central export file for the Kubernetes and Tekton clients
- * @description This file exports all clients.
+ * @fileoverview Exports the KubernetesClient and TektonClient class.
+ * @module clients
+ * @preferred
  */
-export * from './TektonClient';
 export * from './KubernetesClient';
+export * from './TektonClient';
