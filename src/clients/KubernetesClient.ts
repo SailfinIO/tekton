@@ -10,7 +10,13 @@
 import { request, RequestOptions } from 'https';
 import { URL } from 'url';
 import { ResolvedKubeConfig, KubernetesResource, WatchEvent } from '../models';
-import { FileSystem, Logger, PemUtils, YamlParser } from '../utils';
+import {
+  FileSystem,
+  Logger,
+  PemUtils,
+  YamlParser,
+  KubeConfigReader,
+} from '../utils';
 import {
   ApiError,
   ClientError,
@@ -26,7 +32,6 @@ import {
 } from '../interfaces';
 import { Readable } from 'stream';
 import { HttpStatus, LogLevel } from '../enums';
-import { KubeConfigReader } from '../utils';
 import { KindToResourceNameMap } from '../constants';
 
 /**
