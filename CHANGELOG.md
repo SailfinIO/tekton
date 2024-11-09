@@ -1,3 +1,15 @@
+## [1.0.7](https://github.com/SailfinIO/tekton/compare/v1.0.6...v1.0.7) (2024-11-09)
+
+
+### Bug Fixes
+
+* add ILogger back ([9f2f0d8](https://github.com/SailfinIO/tekton/commit/9f2f0d83160725ca21c695e1c605e3126e6d4875))
+* clean package ([9751059](https://github.com/SailfinIO/tekton/commit/9751059c64c644599655c4d4b1e35ebd04d147ac))
+* comment logger export temporarily ([a2ead67](https://github.com/SailfinIO/tekton/commit/a2ead6779c4fa394ffa1dc010f6d45ac28861011))
+* extend ClientOptions ([6dfca01](https://github.com/SailfinIO/tekton/commit/6dfca01a283d2097e9f8c28cc3b2df4dc1de1278))
+* ilogger imports ([2de2320](https://github.com/SailfinIO/tekton/commit/2de2320ada7b28d78386d10b190a0b5d3c0f9920))
+* temp move ilogger ([62289db](https://github.com/SailfinIO/tekton/commit/62289db777e4f915897a42ca264d772f14934b16))
+
 ## [1.0.6](https://github.com/SailfinIO/tekton/compare/v1.0.5...v1.0.6) (2024-11-08)
 
 
