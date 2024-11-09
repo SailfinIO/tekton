@@ -13,6 +13,94 @@ import { ClientRequest, IncomingMessage } from 'http';
 jest.mock('../utils/KubeConfigReader');
 jest.mock('../utils/Logger');
 
+type ReadFileMock = jest.Mock<
+  Promise<string>,
+  [path: string, encoding: BufferEncoding]
+> &
+  jest.Mock<Promise<Buffer>, [path: string]>;
+
+const readFileMock: ReadFileMock = jest.fn(
+  (path: string, encoding?: BufferEncoding): Promise<string | Buffer> => {
+    if (encoding === 'utf8') {
+      // Return string data for PEM-encoded files
+      switch (path) {
+        case '/mock/.kube/config':
+          return Promise.resolve(kubeconfigYaml);
+        case 'mock-ca-path':
+          return Promise.resolve(`-----BEGIN CERTIFICATE-----
+  MIIDdzCCAl+gAwIBAgIEbVYt0TANBgkqhkiG9w0BAQsFADBvMQswCQYDVQQGEwJV
+  ...
+  -----END CERTIFICATE-----`);
+        case 'mock-client-cert-path':
+          return Promise.resolve(`-----BEGIN CERTIFICATE-----
+  MIIDdzCCAl+gAwIBAgIEbVYt0TANBgkqhkiG9w0BAQsFADBvMQswCQYDVQQGEwJV
+  ...
+  -----END CERTIFICATE-----`);
+        case 'mock-client-key-path':
+          return Promise.resolve(`-----BEGIN PRIVATE KEY-----
+  MIIEvQIBADANBgkqhkiG9w0BAQEFAASC...
+  -----END PRIVATE KEY-----`);
+        default:
+          return Promise.resolve(''); // Default string response
+      }
+    } else {
+      // Return Buffer data for non-UTF8 encodings
+      switch (path) {
+        case 'mock-ca-path':
+          return Promise.resolve(Buffer.from('mock-ca-cert'));
+        default:
+          return Promise.resolve(Buffer.from('')); // Default Buffer response
+      }
+    }
+  },
+) as ReadFileMock;
+
+const createMockFileSystem = (): jest.Mocked<IFileSystem> => ({
+  readFile: readFileMock, // Assign the custom ReadFileMock
+  access: jest.fn(),
+});
+
+const kubeconfigYaml = `
+apiVersion: v1
+clusters:
+  - name: test-cluster
+    cluster:
+      server: https://localhost:6443
+      certificate-authority-data: |
+        -----BEGIN CERTIFICATE-----
+        MIIDdzCCAl+gAwIBAgIEbVYt0TANBgkqhkiG9w0BAQsFADBvMQswCQYDVQQGEwJV
+        UzELMAkGA1UECAwCTlkxCzAJBgNVBAcMAk5ZMQswCQYDVQQKDAJOWTELMAkGA1UE
+        CwwCTlkxCzAJBgNVBAMMAk5ZMB4XDTIxMDYxNTEyMjUyMVoXDTMxMDYxMzEyMjUy
+        MVowbzELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAk5ZMQswCQYDVQQHDAJOWTELMAkG
+        A1UECgwCTlkxCzAJBgNVBAsMAk5ZMQswCQYDVQQDDAJOWTCCASIwDQYJKoZIhvcN
+        AQEBBQADggEPADCCAQoCggEBALw6NcMmsNqMYYGnIXJHjY58U0VThfqfzbjJGpYq
+        ...
+        -----END CERTIFICATE-----
+contexts:
+  - name: test-context
+    context:
+      cluster: test-cluster
+      user: test-user
+current-context: test-context
+users:
+  - name: test-user
+    user:
+      client-certificate-data: |
+        -----BEGIN CERTIFICATE-----
+        MIIDdzCCAl+gAwIBAgIEbVYt0TANBgkqhkiG9w0BAQsFADBvMQswCQYDVQQGEwJV
+        UzELMAkGA1UECAwCTlkxCzAJBgNVBAcMAk5ZMQswCQYDVQQKDAJOWTELMAkGA1UE
+        CwwCTlkxCzAJBgNVBAMMAk5ZMB4XDTIxMDYxNTEyMjUyMVoXDTMxMDYxMzEyMjUy
+        MVowbzELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAk5ZMQswCQYDVQQHDAJOWTELMAkG
+        A1UECgwCTlkxCzAJBgNVBAsMAk5ZMQswCQYDVQQDDAJOWTCCASIwDQYJKoZIhvcN
+        AQEBBQADggEPADCCAQoCggEBALw6NcMmsNqMYYGnIXJHjY58U0VThfqfzbjJGpYq
+        ...
+        -----END CERTIFICATE-----
+      client-key-data: |
+        -----BEGIN PRIVATE KEY-----
+        MIIEvQIBADANBgkqhkiG9w0BAQEFAASC...
+        -----END PRIVATE KEY-----
+`;
+
 describe('KubernetesClient', () => {
   let mockKubeConfig: ResolvedKubeConfig;
   let mockLogger: jest.Mocked<ILogger>;
@@ -58,10 +146,7 @@ describe('KubernetesClient', () => {
       .mockResolvedValue(mockKubeConfig);
 
     // Setup mock FileSystem
-    mockFileSystem = {
-      readFile: jest.fn(),
-      access: jest.fn(),
-    };
+    mockFileSystem = createMockFileSystem();
   });
 
   // Helper function to mock https.request using jest.spyOn
@@ -136,7 +221,6 @@ describe('KubernetesClient', () => {
 
       expect(resource).toEqual(mockResource);
     });
-
     it('should throw an error if kubeConfig cannot be loaded', async () => {
       (
         KubeConfigReader as jest.MockedClass<typeof KubeConfigReader>
@@ -160,10 +244,18 @@ describe('KubernetesClient', () => {
       ).prototype.getInClusterConfig.mockResolvedValue(mockKubeConfig);
 
       // Mock readFile for certificateAuthority
-      mockFileSystem.readFile.mockImplementation(
-        (path: string, encoding?: BufferEncoding) => {
+      (mockFileSystem.readFile as jest.Mock).mockImplementation(
+        (path: string, encoding?: BufferEncoding): Promise<string | Buffer> => {
           if (path === 'mock-ca-path') {
-            return Promise.resolve(Buffer.from('mock-ca-cert'));
+            return Promise.resolve(`-----BEGIN CERTIFICATE-----
+MIIDdzCCAl+gAwIBAgIEbVYt0TANBgkqhkiG9w0BAQsFADBvMQswCQYDVQQGEwJV
+UzELMAkGA1UECAwCTlkxCzAJBgNVBAcMAk5ZMQswCQYDVQQKDAJOWTELMAkGA1UE
+CwwCTlkxCzAJBgNVBAMMAk5ZMB4XDTIxMDYxNTEyMjUyMVoXDTMxMDYxMzEyMjUy
+MVowbzELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAk5ZMQswCQYDVQQHDAJOWTELMAkG
+A1UECgwCTlkxCzAJBgNVBAsMAk5ZMQswCQYDVQQDDAJOWTCCASIwDQYJKoZIhvcN
+AQEBBQADggEPADCCAQoCggEBALw6NcMmsNqMYYGnIXJHjY58U0VThfqfzbjJGpYq
+...
+-----END CERTIFICATE-----`);
           }
           return Promise.resolve(Buffer.from(''));
         },
@@ -186,16 +278,42 @@ describe('KubernetesClient', () => {
     let client: KubernetesClient;
 
     beforeEach(async () => {
-      // Mock readFile for certificateAuthority
-      mockFileSystem.readFile.mockImplementation(
-        (path: string, encoding?: BufferEncoding) => {
-          if (path === 'mock-ca-path') {
-            return Promise.resolve(Buffer.from('mock-ca-cert'));
+      // Mock readFile to return string for 'utf8' encoding and Buffer otherwise
+      (mockFileSystem.readFile as jest.Mock).mockImplementation(
+        (path: string, encoding?: BufferEncoding): Promise<string | Buffer> => {
+          if (encoding === 'utf8') {
+            // Return string data for PEM-encoded files
+            switch (path) {
+              case 'mock-ca-path':
+                return Promise.resolve(`-----BEGIN CERTIFICATE-----
+  MIIDdzCCAl+gAwIBAgIEbVYt0TANBgkqhkiG9w0BAQsFADBvMQswCQYDVQQGEwJV
+  ...
+  -----END CERTIFICATE-----`);
+              case 'mock-client-cert-path':
+                return Promise.resolve(`-----BEGIN CERTIFICATE-----
+  MIIDdzCCAl+gAwIBAgIEbVYt0TANBgkqhkiG9w0BAQsFADBvMQswCQYDVQQGEwJV
+  ...
+  -----END CERTIFICATE-----`);
+              case 'mock-client-key-path':
+                return Promise.resolve(`-----BEGIN PRIVATE KEY-----
+  MIIEvQIBADANBgkqhkiG9w0BAQEFAASC...
+  -----END PRIVATE KEY-----`);
+              default:
+                return Promise.resolve(''); // Default string response
+            }
+          } else {
+            // Return Buffer data for non-UTF8 encodings
+            switch (path) {
+              case 'mock-ca-path':
+                return Promise.resolve(Buffer.from('mock-ca-cert'));
+              default:
+                return Promise.resolve(Buffer.from('')); // Default Buffer response
+            }
           }
-          return Promise.resolve(Buffer.from(''));
         },
       );
 
+      // Initialize the client with the mocked file system
       client = await KubernetesClient.create({
         fileSystem: mockFileSystem,
       });

@@ -1,4 +1,4 @@
-// src/utils/KubeConfigReader.spec.ts
+// src/utils/KubeConfigReader.test.ts
 
 import { IFileSystem } from '../interfaces';
 import { KubeConfigReader } from './KubeConfigReader';
@@ -117,25 +117,75 @@ describe('KubeConfigReader', () => {
    */
   describe('getKubeConfig', () => {
     it('should successfully read and parse kubeconfig, returning ResolvedKubeConfig', async () => {
-      // Mock file content
-      const kubeConfigContent = `
-        apiVersion: v1
-        clusters:
-          - cluster:
-              server: https://1.2.3.4
-              certificate-authority-data: abc123
-            name: cluster1
-        contexts:
-          - context:
-              cluster: cluster1
-              user: user1
-            name: context1
-        current-context: context1
-        users:
-          - name: user1
-            user:
-              token: mytoken
+      const validPemCertificate = `-----BEGIN CERTIFICATE-----
+      MIIDdzCCAl+gAwIBAgIEbVYt0TANBgkqhkiG9w0BAQsFADBvMQswCQYDVQQGEwJV
+      UzELMAkGA1UECAwCTlkxCzAJBgNVBAcMAk5ZMQswCQYDVQQKDAJOWTELMAkGA1UE
+      CwwCTlkxCzAJBgNVBAMMAk5ZMB4XDTIxMDYxNTEyMjUyMVoXDTMxMDYxMzEyMjUy
+      MVowbzELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAk5ZMQswCQYDVQQHDAJOWTELMAkG
+      A1UECgwCTlkxCzAJBgNVBAsMAk5ZMQswCQYDVQQDDAJOWTCCASIwDQYJKoZIhvcN
+      AQEBBQADggEPADCCAQoCggEBALw6NcMmsNqMYYGnIXJHjY58U0VThfqfzbjJGpYq
+      ...
+      -----END CERTIFICATE-----`;
+
+      const validPemPrivateKey = `-----BEGIN PRIVATE KEY-----
+      MIIEvQIBADANBgkqhkiG9w0BAQEFAASC...
+      -----END PRIVATE KEY-----`;
+
+      const kubeconfigYaml = `
+      apiVersion: v1
+      clusters:
+        - name: test-cluster
+          cluster:
+            server: https://localhost:6443
+            certificate-authority-data: |
+              ${validPemCertificate}
+      contexts:
+        - name: test-context
+          context:
+            cluster: test-cluster
+            user: test-user
+      current-context: test-context
+      users:
+        - name: test-user
+          user:
+            client-certificate-data: |
+              ${validPemCertificate}
+            client-key-data: |
+              ${validPemPrivateKey}
       `;
+
+      const kubeconfig = {
+        apiVersion: 'v1',
+        clusters: [
+          {
+            name: 'test-cluster',
+            cluster: {
+              server: 'https://localhost:6443',
+              certificateAuthorityData: validPemCertificate,
+            },
+          },
+        ],
+        contexts: [
+          {
+            name: 'test-context',
+            context: {
+              cluster: 'test-cluster',
+              user: 'test-user',
+            },
+          },
+        ],
+        currentContext: 'test-context',
+        users: [
+          {
+            name: 'test-user',
+            user: {
+              clientCertificateData: validPemCertificate,
+              clientKeyData: validPemPrivateKey,
+            },
+          },
+        ],
+      };
+
       const mockKubeConfigPath = '/mock/.kube/config';
       // Mock FileSystem to return the kubeConfigContent
       mockFileSystem.readFile = jest
@@ -143,11 +193,11 @@ describe('KubeConfigReader', () => {
         .mockImplementation((path: string, encoding?: BufferEncoding) => {
           if (encoding === 'utf8') {
             if (path === mockKubeConfigPath) {
-              return Promise.resolve(kubeConfigContent);
+              return Promise.resolve(kubeconfigYaml);
             }
           } else {
             if (path === mockKubeConfigPath) {
-              return Promise.resolve(Buffer.from(kubeConfigContent));
+              return Promise.resolve(Buffer.from(kubeconfigYaml));
             }
           }
           return Promise.reject(
@@ -155,47 +205,18 @@ describe('KubeConfigReader', () => {
           );
         }) as jest.MockedFunction<IFileSystem['readFile']>;
 
-      // Mock YamlParser.parse to return the parsed object
-      const parsedConfig = {
-        apiVersion: 'v1',
-        clusters: [
-          {
-            name: 'cluster1',
-            cluster: {
-              server: 'https://1.2.3.4',
-              certificateAuthorityData: 'abc123',
-            },
-          },
-        ],
-        contexts: [
-          {
-            name: 'context1',
-            context: {
-              cluster: 'cluster1',
-              user: 'user1',
-            },
-          },
-        ],
-        currentContext: 'context1', // Adjusted to camelCase based on mapKeys
-        users: [
-          {
-            name: 'user1',
-            user: {
-              token: 'mytoken',
-            },
-          },
-        ],
-      };
-
-      mockedYamlParser.parse.mockReturnValue(parsedConfig);
+      mockedYamlParser.parse.mockReturnValue(kubeconfig);
 
       const expectedResolvedConfig: ResolvedKubeConfig = {
         cluster: {
-          server: 'https://1.2.3.4',
-          certificateAuthorityData: 'abc123',
+          server: 'https://localhost:6443',
+          certificateAuthorityData:
+            'MIIDdzCCAl+gAwIBAgIEbVYt0TANBgkqhkiG9w0BAQsFADBvMQswCQYDVQQGEwJVUzELMAkGA1UECAwCTlkxCzAJBgNVBAcMAk5ZMQswCQYDVQQKDAJOWTELMAkGA1UECwwCTlkxCzAJBgNVBAMMAk5ZMB4XDTIxMDYxNTEyMjUyMVoXDTMxMDYxMzEyMjUyMVowbzELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAk5ZMQswCQYDVQQHDAJOWTELMAkGA1UECgwCTlkxCzAJBgNVBAsMAk5ZMQswCQYDVQQDDAJOWTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBALw6NcMmsNqMYYGnIXJHjY58U0VThfqfzbjJGpYq',
         },
         user: {
-          token: 'mytoken',
+          clientCertificateData:
+            'MIIDdzCCAl+gAwIBAgIEbVYt0TANBgkqhkiG9w0BAQsFADBvMQswCQYDVQQGEwJVUzELMAkGA1UECAwCTlkxCzAJBgNVBAcMAk5ZMQswCQYDVQQKDAJOWTELMAkGA1UECwwCTlkxCzAJBgNVBAMMAk5ZMB4XDTIxMDYxNTEyMjUyMVoXDTMxMDYxMzEyMjUyMVowbzELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAk5ZMQswCQYDVQQHDAJOWTELMAkGA1UECgwCTlkxCzAJBgNVBAsMAk5ZMQswCQYDVQQDDAJOWTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBALw6NcMmsNqMYYGnIXJHjY58U0VThfqfzbjJGpYq',
+          clientKeyData: 'MIIEvQIBADANBgkqhkiG9w0BAQEFAASC',
         },
       };
 
@@ -205,7 +226,7 @@ describe('KubeConfigReader', () => {
         kubeConfigReader['kubeConfigPath'],
         'utf8',
       );
-      expect(YamlParser.parse).toHaveBeenCalledWith(kubeConfigContent);
+      expect(YamlParser.parse).toHaveBeenCalledWith(kubeconfigYaml);
       expect(mockedLoggerInstance.error).not.toHaveBeenCalled();
       expect(mockedLoggerInstance.warn).not.toHaveBeenCalled();
       expect(result).toEqual(expectedResolvedConfig);
