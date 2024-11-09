@@ -2,35 +2,205 @@
 
 import { ResolvedKubeConfig } from '../models';
 import { YamlParser } from './YamlParser';
-import { Logger } from './Logger';
-import * as path from 'path';
+import { ILogger, IFileSystem } from '../interfaces';
+import { FileSystem } from './FileSystem';
+import { PemUtils } from './PemUtils';
 import {
   ConfigFileNotFoundError,
   InvalidConfigError,
   ParsingError,
+  KubeConfigError,
+  NotInClusterError,
 } from '../errors';
-import { IFileSystem, ILogger } from '../interfaces';
-import { FileSystem } from './FileSystem';
-import { PemUtils } from './PemUtils';
+import * as path from 'path';
+import { Logger } from './Logger';
 
 export class KubeConfigReader {
-  private kubeConfigPath: string;
-  public static logger: ILogger;
-  private fileSystem: IFileSystem;
-  private yamlParser: typeof YamlParser;
+  private readonly kubeConfigPath: string;
+  private readonly fileSystem: IFileSystem;
+  private readonly yamlParser: typeof YamlParser;
+  protected readonly logger: ILogger;
 
   constructor(
     kubeConfigPath?: string,
-    fsInstance: IFileSystem = new FileSystem(),
+    fsInstance?: IFileSystem,
     yamlParser: typeof YamlParser = YamlParser,
-    logger: Logger = new Logger(KubeConfigReader.name),
+    logger: ILogger = new Logger(KubeConfigReader.name),
   ) {
     this.kubeConfigPath =
       kubeConfigPath ||
       path.join(process.env.HOME || '/root', '.kube', 'config');
-    this.fileSystem = fsInstance;
+    this.fileSystem = fsInstance || new FileSystem();
     this.yamlParser = yamlParser;
-    KubeConfigReader.logger = logger;
+    this.logger = logger;
+  }
+
+  public async getKubeConfig(): Promise<ResolvedKubeConfig> {
+    try {
+      const rawConfig = await this.loadAndParseKubeConfig();
+      const config = this.mapKeys(rawConfig);
+
+      const currentContextName = config.currentContext;
+      if (!currentContextName) {
+        throw new InvalidConfigError('No currentContext is set in kubeconfig.');
+      }
+
+      const context = this.getContext(config, currentContextName);
+      const cluster = this.getCluster(config, context.cluster);
+      const user = this.getUser(config, context.user);
+
+      this.processUserPemData(user);
+      this.processClusterPemData(cluster);
+
+      return { cluster, user };
+    } catch (error: any) {
+      if (error instanceof ConfigFileNotFoundError) {
+        throw new KubeConfigError(
+          `Failed to load kubeconfig from file: ${error.message}`,
+        );
+      }
+      this.handleError(error);
+    }
+  }
+
+  public async getInClusterConfig(): Promise<ResolvedKubeConfig> {
+    const tokenPath = '/var/run/secrets/kubernetes.io/serviceaccount/token';
+    const caPath = '/var/run/secrets/kubernetes.io/serviceaccount/ca.crt';
+    const namespacePath =
+      '/var/run/secrets/kubernetes.io/serviceaccount/namespace';
+
+    try {
+      const serviceHost = process.env.KUBERNETES_SERVICE_HOST;
+      const servicePort = process.env.KUBERNETES_SERVICE_PORT;
+
+      if (!serviceHost || !servicePort) {
+        this.logger.error(
+          'Not running inside a Kubernetes cluster. Environment variables KUBERNETES_SERVICE_HOST or KUBERNETES_SERVICE_PORT are missing.',
+        );
+        throw new NotInClusterError('Not running inside a Kubernetes cluster.');
+      }
+
+      const [tokenExists, caExists, namespaceExists] = await Promise.all([
+        this.fileExists(tokenPath),
+        this.fileExists(caPath),
+        this.fileExists(namespacePath),
+      ]);
+
+      if (!tokenExists) {
+        this.logger.error(`Missing service account token file at ${tokenPath}`);
+        throw new ConfigFileNotFoundError(
+          `Service account token is missing at path: ${tokenPath}`,
+        );
+      }
+      if (!caExists) {
+        this.logger.error(`Missing CA certificate file at ${caPath}`);
+        throw new ConfigFileNotFoundError(
+          `CA certificate is missing at path: ${caPath}`,
+        );
+      }
+      if (!namespaceExists) {
+        this.logger.warn(`Missing namespace file at ${namespacePath}`);
+      }
+
+      const [token, ca] = await Promise.all([
+        this.readFileSafely(tokenPath, 'utf8') as Promise<string>,
+        this.readFileSafely(caPath) as Promise<Buffer>,
+      ]);
+
+      // Validate token
+      if (!token.trim()) {
+        throw new InvalidConfigError(
+          'Service account token is missing or invalid.',
+        );
+      }
+
+      // Validate CA
+      if (!(ca instanceof Buffer) || ca.length === 0) {
+        throw new InvalidConfigError('CA certificate is missing or invalid.');
+      }
+
+      // Optionally, read and validate namespace
+      try {
+        const namespace = await this.readFileSafely(namespacePath, 'utf8');
+        if (!namespace || typeof namespace !== 'string') {
+          this.logger.warn('Namespace is missing or invalid.');
+        }
+      } catch {
+        this.logger.warn('Failed to read namespace file.');
+      }
+
+      const server = `https://${serviceHost}:${servicePort}`;
+
+      return {
+        cluster: {
+          server,
+          certificateAuthorityData: ca.toString('base64'),
+        },
+        user: {
+          token: token.trim(),
+        },
+      };
+    } catch (error: any) {
+      this.handleError(error);
+      throw error;
+    }
+  }
+
+  private async loadAndParseKubeConfig(): Promise<any> {
+    const fileContent = await this.fileSystem.readFile(
+      this.kubeConfigPath,
+      'utf8',
+    );
+    return this.yamlParser.parse(fileContent);
+  }
+
+  private getContext(config: any, contextName: string): any {
+    return this.extractConfigSection(
+      config,
+      'contexts',
+      contextName,
+      `Context '${contextName}' not found in kubeconfig.`,
+    );
+  }
+
+  private getCluster(config: any, clusterName: string): any {
+    return this.extractConfigSection(
+      config,
+      'clusters',
+      clusterName,
+      `Cluster '${clusterName}' not found in kubeconfig.`,
+    );
+  }
+
+  private getUser(config: any, userName: string): any {
+    return this.extractConfigSection(
+      config,
+      'users',
+      userName,
+      `User '${userName}' not found in kubeconfig.`,
+    );
+  }
+
+  private processUserPemData(user: any): void {
+    user.clientCertificateData = this.processPemData(
+      user.clientCertificateData,
+      'CERTIFICATE',
+      'clientCertificateData',
+    );
+
+    user.clientKeyData = this.processPemData(
+      user.clientKeyData,
+      'PRIVATE KEY',
+      'clientKeyData',
+    );
+  }
+
+  private processClusterPemData(cluster: any): void {
+    cluster.certificateAuthorityData = this.processPemData(
+      cluster.certificateAuthorityData,
+      'CERTIFICATE',
+      'certificateAuthorityData',
+    );
   }
 
   private mapKeys(obj: any): any {
@@ -55,270 +225,97 @@ export class KubeConfigReader {
     return PemUtils.pemToBuffer(data, type);
   }
 
-  public async getKubeConfig(): Promise<ResolvedKubeConfig> {
+  private processPemData(
+    data: string | undefined,
+    type: string,
+    fieldName: string,
+  ): string | undefined {
+    if (data) {
+      const buffer = this.validateAndConvertPem(data, type);
+      return buffer.toString('base64'); // Apply consistent base64 encoding
+    }
+    return undefined;
+  }
+
+  private extractConfigSection(
+    config: any,
+    section: string,
+    name: string,
+    errorMessage: string,
+  ): any {
+    const entry = config[section].find((item: any) => item.name === name);
+    if (!entry) {
+      this.logger.error(errorMessage); // Log the specific error message here
+      throw new ConfigFileNotFoundError(errorMessage);
+    }
+    return entry[section.slice(0, -1)];
+  }
+
+  private async fileExists(filePath: string): Promise<boolean> {
     try {
-      const fileContent = await this.fileSystem.readFile(
-        this.kubeConfigPath,
-        'utf8',
-      );
-      const rawConfig = this.yamlParser.parse(fileContent);
-      const config: any = this.mapKeys(rawConfig);
-
-      // Validate presence of required fields
-      if (!config.currentContext) {
-        KubeConfigReader.logger.error(
-          'No currentContext is set in kubeconfig.',
-        );
-        null;
-      }
-
-      const currentContextName = config.currentContext;
-      if (!currentContextName) {
-        KubeConfigReader.logger.error(
-          `No currentContext is set in kubeconfig.`,
-        );
-        return null;
-      }
-
-      const context = config.contexts.find(
-        (ctx: any) => ctx.name === currentContextName,
-      )?.context;
-
-      if (!context) {
-        KubeConfigReader.logger.error(
-          `Context '${currentContextName}' not found in kubeconfig.`,
-        );
-        return null;
-      }
-
-      const clusterEntry = config.clusters.find(
-        (c: any) => c.name === context.cluster,
-      );
-      const cluster = clusterEntry?.cluster;
-
-      if (!cluster) {
-        KubeConfigReader.logger.error(
-          `Cluster '${context.cluster}' not found in kubeconfig.`,
-        );
-        return null;
-      }
-
-      const userEntry = config.users.find((u: any) => u.name === context.user);
-      const user = userEntry?.user;
-
-      if (!user) {
-        KubeConfigReader.logger.error(
-          `User '${context.user}' not found in kubeconfig.`,
-        );
-        return null;
-      }
-
-      // Handle PEM-encoded data
-      if (user.clientCertificateData) {
-        try {
-          const certBuffer = this.validateAndConvertPem(
-            user.clientCertificateData,
-            'CERTIFICATE',
-          );
-          // Convert Buffer back to base64 string if needed
-          user.clientCertificateData = certBuffer.toString('base64');
-        } catch (error) {
-          KubeConfigReader.logger.error(
-            `Invalid clientCertificateData: ${(error as Error).message}`,
-          );
-          throw new InvalidConfigError(
-            `Invalid clientCertificateData: ${(error as Error).message}`,
-          );
-        }
-      }
-
-      if (user.clientKeyData) {
-        try {
-          const keyBuffer = this.validateAndConvertPem(
-            user.clientKeyData,
-            'PRIVATE KEY',
-          );
-          // Convert Buffer back to base64 string if needed
-          user.clientKeyData = keyBuffer.toString('base64');
-        } catch (error) {
-          KubeConfigReader.logger.error(
-            `Invalid clientKeyData: ${(error as Error).message}`,
-          );
-          throw new InvalidConfigError(
-            `Invalid clientKeyData: ${(error as Error).message}`,
-          );
-        }
-      }
-
-      if (cluster.certificateAuthorityData) {
-        try {
-          const caBuffer = this.validateAndConvertPem(
-            cluster.certificateAuthorityData,
-            'CERTIFICATE',
-          );
-          // Convert Buffer back to base64 string if needed
-          cluster.certificateAuthorityData = caBuffer.toString('base64');
-        } catch (error) {
-          KubeConfigReader.logger.error(
-            `Invalid certificateAuthorityData: ${(error as Error).message}`,
-          );
-          throw new InvalidConfigError(
-            `Invalid certificateAuthorityData: ${(error as Error).message}`,
-          );
-        }
-      }
-
-      return {
-        cluster,
-        user,
-      };
-    } catch (error: any) {
-      if (error.code === 'ENOENT') {
-        throw new ConfigFileNotFoundError(this.kubeConfigPath);
-      } else if (error instanceof SyntaxError) {
-        throw new ParsingError(
-          'Failed to parse kubeconfig YAML.',
-          error.message,
-        );
-      } else if (error instanceof InvalidConfigError) {
-        throw error; // Re-throw specific config errors
-      } else {
-        KubeConfigReader.logger.error(`Unexpected error: ${error.message}`);
-        throw new Error(`Failed to read kubeconfig: ${error.message}`);
-      }
+      await this.fileSystem.access(filePath);
+      return true;
+    } catch {
+      return false;
     }
   }
 
-  public async getInClusterConfig(): Promise<ResolvedKubeConfig> {
+  private async readFileSafely(
+    filePath: string,
+    encoding?: BufferEncoding,
+  ): Promise<string | Buffer> {
+    try {
+      return await this.fileSystem.readFile(filePath, encoding);
+    } catch (error: any) {
+      throw new ConfigFileNotFoundError(
+        `Failed to read file at ${filePath}: ${error.message}`,
+      );
+    }
+  }
+
+  private async isInCluster(): Promise<boolean> {
     const tokenPath = '/var/run/secrets/kubernetes.io/serviceaccount/token';
     const caPath = '/var/run/secrets/kubernetes.io/serviceaccount/ca.crt';
     const namespacePath =
       '/var/run/secrets/kubernetes.io/serviceaccount/namespace';
 
-    // Helper function to check file existence
-    const fileExists = async (filePath: string): Promise<boolean> => {
-      try {
-        await this.fileSystem.access(filePath);
-        return true;
-      } catch {
-        return false;
-      }
-    };
+    const [tokenExists, caExists, namespaceExists] = await Promise.all([
+      this.fileExists(tokenPath),
+      this.fileExists(caPath),
+      this.fileExists(namespacePath),
+    ]);
 
-    // Helper function to read file content safely
-    const safeReadFile = async (
-      filePath: string,
-      encoding?: BufferEncoding,
-    ): Promise<string | Buffer> => {
-      try {
-        const content = await this.fileSystem.readFile(filePath, encoding);
-        return content;
-      } catch (error: any) {
-        KubeConfigReader.logger.error(
-          `Failed to read file at ${filePath}: ${error.message}`,
-        );
-        throw new Error(`Failed to read file at ${filePath}: ${error.message}`);
-      }
-    };
+    if (!tokenExists)
+      this.logger.error(`Missing service account token file at ${tokenPath}`);
+    if (!caExists)
+      this.logger.error(`Missing CA certificate file at ${caPath}`);
+    if (!namespaceExists)
+      this.logger.warn(`Missing namespace file at ${namespacePath}`); // Namespace is optional
 
-    // Detect if running in a Kubernetes cluster
-    const isInCluster = async (): Promise<boolean> => {
-      const tokenExists = await fileExists(tokenPath);
-      const caExists = await fileExists(caPath);
-      const namespaceExists = await fileExists(namespacePath);
-      const serviceHost = process.env.KUBERNETES_SERVICE_HOST;
-      const servicePort = process.env.KUBERNETES_SERVICE_PORT;
+    const serviceHost = process.env.KUBERNETES_SERVICE_HOST;
+    const servicePort = process.env.KUBERNETES_SERVICE_PORT;
 
-      return (
-        tokenExists &&
-        caExists &&
-        namespaceExists &&
-        !!serviceHost &&
-        !!servicePort
+    return tokenExists && caExists && !!serviceHost && !!servicePort;
+  }
+
+  private handleError(error: any): never | null {
+    if (error instanceof KubeConfigError) {
+      this.logAndThrowError(error);
+    } else if (error instanceof SyntaxError) {
+      this.logAndThrowError(
+        new ParsingError('Failed to parse kubeconfig YAML.', error.message),
       );
-    };
-
-    try {
-      const inCluster = await isInCluster();
-
-      if (!inCluster) {
-        KubeConfigReader.logger.error(
-          'Not running inside a Kubernetes cluster.',
-        );
-        if (
-          !process.env.KUBERNETES_SERVICE_HOST ||
-          !process.env.KUBERNETES_SERVICE_PORT
-        ) {
-          throw new Error(
-            'KUBERNETES_SERVICE_HOST or KUBERNETES_SERVICE_PORT environment variables are not set.',
-          );
-        }
-        throw new Error('In-cluster configuration is not available.');
-      }
-
-      const [token, ca, namespace] = await Promise.all([
-        safeReadFile(tokenPath, 'utf8'), // Read as string
-        safeReadFile(caPath), // Read as Buffer (no encoding)
-        safeReadFile(namespacePath, 'utf8'), // Read as string
-      ]);
-      // Validate token and CA
-      if (!token || typeof token !== 'string' || token.trim() === '') {
-        KubeConfigReader.logger.error(
-          'Service account token is missing or invalid.',
-        );
-        throw new Error('Service account token is missing or invalid.');
-      }
-
-      if (!ca || !(ca instanceof Buffer)) {
-        KubeConfigReader.logger.error('CA certificate is missing or invalid.');
-        throw new Error(
-          'In-cluster configuration loading failed: CA certificate is missing or invalid.',
-        );
-      }
-
-      if (ca.length === 0) {
-        KubeConfigReader.logger.error('CA certificate data is empty.');
-        throw new Error(
-          'In-cluster configuration loading failed: CA certificate data is empty.',
-        );
-      }
-
-      // Optionally, validate namespace
-      if (!namespace || typeof namespace !== 'string') {
-        KubeConfigReader.logger.warn('Namespace is missing or invalid.');
-      }
-
-      if (
-        !process.env.KUBERNETES_SERVICE_HOST ||
-        !process.env.KUBERNETES_SERVICE_PORT
-      ) {
-        KubeConfigReader.logger.error(
-          'KUBERNETES_SERVICE_HOST or KUBERNETES_SERVICE_PORT environment variables are not set.',
-        );
-        throw new Error(
-          'KUBERNETES_SERVICE_HOST or KUBERNETES_SERVICE_PORT environment variables are not set.',
-        );
-      }
-
-      const server = `https://${process.env.KUBERNETES_SERVICE_HOST}:${process.env.KUBERNETES_SERVICE_PORT}`;
-
-      return {
-        cluster: {
-          server,
-          certificateAuthorityData: ca.toString('base64'),
-        },
-        user: {
-          token: token.trim(),
-        },
-      };
-    } catch (error: any) {
-      KubeConfigReader.logger.error(
-        'Failed to load in-cluster configuration',
-        error,
-      );
-      throw new Error(
-        `In-cluster configuration loading failed: ${error.message}`,
-      );
+    } else if (error.code === 'ENOENT') {
+      this.logAndThrowError(new ConfigFileNotFoundError(this.kubeConfigPath));
+    } else {
+      this.logger.error(`Unexpected error: ${error.message}`, error);
+      throw new KubeConfigError(`Failed to read kubeconfig: ${error.message}`);
     }
+    return null; // Unreachable
+  }
+
+  private logAndThrowError(error: KubeConfigError): never {
+    this.logger.error(error.message, error);
+    throw error;
   }
 }

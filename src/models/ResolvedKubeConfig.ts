@@ -1,4 +1,4 @@
-import { Cluster, User, Context } from './KubeConfig';
+import { Cluster, User } from './KubeConfig';
 
 /**
  * Represents a resolved Kubernetes configuration containing selected cluster and user details.
