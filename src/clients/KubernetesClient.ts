@@ -644,14 +644,13 @@ export class KubernetesClient implements IKubernetesClient {
 
     for await (const chunk of stream) {
       const data = chunk.toString();
-      this.logger.debug(`Received watch event chunk of size: ${data.length}`);
       for (const line of data.split('\n')) {
         if (line.trim()) {
           try {
             yield JSON.parse(line) as WatchEvent<T>;
-          } catch (e: any) {
+          } catch (e) {
             this.logger.error(`Failed to parse watch event JSON: ${e.message}`);
-            // Optionally, yield a parsed error event or continue
+            throw new Error('Failed to parse watch event JSON');
           }
         }
       }
