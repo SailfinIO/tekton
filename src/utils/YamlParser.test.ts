@@ -1,6 +1,6 @@
 // tests/YamlParser.test.ts
 
-import { ParsingError } from '../errors/ParsingError';
+import { ParsingError } from '../errors';
 import { YamlParser } from './YamlParser';
 
 describe('YamlParser', () => {

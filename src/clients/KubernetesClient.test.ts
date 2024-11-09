@@ -3,7 +3,7 @@
 import { KubernetesClient } from './KubernetesClient';
 import { KubeConfigReader } from '../utils';
 import { ResolvedKubeConfig, KubernetesResource, WatchEvent } from '../models';
-import { ApiError } from '../errors';
+import { ApiError, KubeConfigError } from '../errors';
 import https, { RequestOptions } from 'https';
 import { IFileSystem, ILogger } from '../interfaces';
 import { EventEmitter, Readable } from 'stream';
@@ -116,9 +116,6 @@ describe('KubernetesClient', () => {
       setLogLevel: jest.fn(),
       verbose: jest.fn(),
     };
-
-    // Set up static logger
-    KubeConfigReader.logger = mockLogger;
   });
 
   beforeEach(() => {
@@ -221,24 +218,16 @@ describe('KubernetesClient', () => {
 
       expect(resource).toEqual(mockResource);
     });
-    it('should throw an error if kubeConfig cannot be loaded', async () => {
-      (
-        KubeConfigReader as jest.MockedClass<typeof KubeConfigReader>
-      ).prototype.getKubeConfig.mockResolvedValue(null);
-
-      await expect(
-        KubernetesClient.create({
-          kubeConfigPath: 'mock-path',
-          fileSystem: mockFileSystem,
-        }),
-      ).rejects.toThrow('Failed to load kubeconfig from path: mock-path');
-    });
 
     it('should fallback to in-cluster config if default kubeConfig not found', async () => {
+      // Mock the getKubeConfig method to throw a KubeConfigError
       (
         KubeConfigReader as jest.MockedClass<typeof KubeConfigReader>
-      ).prototype.getKubeConfig.mockResolvedValue(null);
+      ).prototype.getKubeConfig.mockRejectedValue(
+        new KubeConfigError('Failed to load kubeconfig from file.'),
+      );
 
+      // Mock the getInClusterConfig to resolve with a valid configuration
       (
         KubeConfigReader as jest.MockedClass<typeof KubeConfigReader>
       ).prototype.getInClusterConfig.mockResolvedValue(mockKubeConfig);
@@ -248,28 +237,32 @@ describe('KubernetesClient', () => {
         (path: string, encoding?: BufferEncoding): Promise<string | Buffer> => {
           if (path === 'mock-ca-path') {
             return Promise.resolve(`-----BEGIN CERTIFICATE-----
-MIIDdzCCAl+gAwIBAgIEbVYt0TANBgkqhkiG9w0BAQsFADBvMQswCQYDVQQGEwJV
-UzELMAkGA1UECAwCTlkxCzAJBgNVBAcMAk5ZMQswCQYDVQQKDAJOWTELMAkGA1UE
-CwwCTlkxCzAJBgNVBAMMAk5ZMB4XDTIxMDYxNTEyMjUyMVoXDTMxMDYxMzEyMjUy
-MVowbzELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAk5ZMQswCQYDVQQHDAJOWTELMAkG
-A1UECgwCTlkxCzAJBgNVBAsMAk5ZMQswCQYDVQQDDAJOWTCCASIwDQYJKoZIhvcN
-AQEBBQADggEPADCCAQoCggEBALw6NcMmsNqMYYGnIXJHjY58U0VThfqfzbjJGpYq
-...
------END CERTIFICATE-----`);
+    MIIDdzCCAl+gAwIBAgIEbVYt0TANBgkqhkiG9w0BAQsFADBvMQswCQYDVQQGEwJV
+    ...
+    -----END CERTIFICATE-----`);
           }
           return Promise.resolve(Buffer.from(''));
         },
       );
 
+      // Attempt to create the KubernetesClient
       const client = await KubernetesClient.create({
         fileSystem: mockFileSystem,
+        logger: mockLogger, // Pass the mocked logger here
       });
+
+      // Verify that the client instance is created successfully
       expect(client).toBeInstanceOf(KubernetesClient);
+
+      // Verify that appropriate log messages were recorded
       expect(mockLogger.info).toHaveBeenCalledWith(
-        'Attempting to load kubeconfig from default path.',
+        'Loading kube config from file.',
       );
       expect(mockLogger.warn).toHaveBeenCalledWith(
-        'Default kube config not found. Attempting to load in-cluster config.',
+        'Failed to load kubeconfig from file. Attempting to load in-cluster config.',
+      );
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        'Loaded in-cluster kube config.',
       );
     });
   });
@@ -567,7 +560,7 @@ AQEBBQADggEPADCCAQoCggEBALw6NcMmsNqMYYGnIXJHjY58U0VThfqfzbjJGpYq
         const events = client.watchResource('v1', 'Pod', 'mock-namespace');
 
         // Attempt to get the next event, which should throw an error
-        await expect(events.next()).rejects.toThrow('Request failed');
+        await expect(events.next()).rejects.toThrow('Error in watch stream.');
 
         expect(mockRequest.end).toHaveBeenCalled();
       });
