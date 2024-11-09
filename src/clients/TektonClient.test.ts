@@ -8,7 +8,10 @@ import {
   TaskRun,
   PipelineResource,
   WatchEvent,
+  PipelineRunStatus,
+  TaskStatus,
 } from '../models';
+import { ClientError } from '../errors';
 
 jest.mock('../utils/Logger');
 
@@ -183,6 +186,318 @@ describe('TektonClient', () => {
         'default',
       );
     });
+
+    it('should get pipeline run status when status is defined', async () => {
+      const pipelineRunStatus: PipelineRunStatus = {
+        startTime: '2024-04-25T10:00:00Z',
+        completionTime: '2024-04-25T10:10:00Z',
+        // Populate additional necessary fields as per your PipelineRunStatus definition
+      };
+
+      const pipelineRun: PipelineRun = {
+        metadata: { name: 'test-pipeline-run' },
+        status: pipelineRunStatus,
+      } as PipelineRun;
+
+      mockK8sClient.getResource.mockResolvedValue(pipelineRun);
+
+      const status = await client.getPipelineRunStatus(
+        'test-pipeline-run',
+        'default',
+      );
+
+      expect(status).toEqual(pipelineRunStatus);
+      expect(mockK8sClient.getResource).toHaveBeenCalledWith(
+        'tekton.dev/v1beta1',
+        'PipelineRun',
+        'test-pipeline-run',
+        'default',
+      );
+    });
+
+    it('should throw ClientError when pipeline run has no status', async () => {
+      const pipelineRun: PipelineRun = {
+        metadata: { name: 'test-pipeline-run' },
+        // status is intentionally omitted to simulate undefined status
+      } as PipelineRun;
+
+      mockK8sClient.getResource.mockResolvedValue(pipelineRun);
+
+      await expect(
+        client.getPipelineRunStatus('test-pipeline-run', 'default'),
+      ).rejects.toThrow(ClientError);
+
+      expect(mockK8sClient.getResource).toHaveBeenCalledWith(
+        'tekton.dev/v1beta1',
+        'PipelineRun',
+        'test-pipeline-run',
+        'default',
+      );
+    });
+
+    it('should throw ClientError when pipeline run does not exist', async () => {
+      mockK8sClient.getResource.mockRejectedValue({
+        message: 'Not Found',
+        statusCode: 404,
+      });
+
+      await expect(
+        client.getPipelineRunStatus('non-existent-run', 'default'),
+      ).rejects.toThrow(ClientError);
+
+      expect(mockK8sClient.getResource).toHaveBeenCalledWith(
+        'tekton.dev/v1beta1',
+        'PipelineRun',
+        'non-existent-run',
+        'default',
+      );
+    });
+
+    it('should handle unexpected API errors gracefully for getPipelineRunStatus', async () => {
+      mockK8sClient.getResource.mockRejectedValue(
+        new Error('Internal Server Error'),
+      );
+
+      await expect(
+        client.getPipelineRunStatus('test-pipeline-run', 'default'),
+      ).rejects.toThrow(ClientError);
+
+      expect(mockK8sClient.getResource).toHaveBeenCalledWith(
+        'tekton.dev/v1beta1',
+        'PipelineRun',
+        'test-pipeline-run',
+        'default',
+      );
+    });
+
+    it('should fetch logs for a single task run with a podName', async () => {
+      const pipelineRun: PipelineRun = {
+        apiVersion: 'tekton.dev/v1beta1',
+        kind: 'PipelineRun',
+        metadata: { name: 'test-pipeline-run' },
+        status: {
+          taskRuns: {
+            'test-task-run-1': {
+              podName: 'test-pod-1',
+            },
+          },
+        },
+      } as PipelineRun;
+
+      const podLogs = 'Logs for test-pod-1';
+      mockK8sClient.getResource.mockResolvedValue(pipelineRun);
+      mockK8sClient.getPodLogs.mockResolvedValue(podLogs);
+
+      const logs = [];
+      for await (const log of client.getPipelineRunLogs(
+        'test-pipeline-run',
+        'default',
+      )) {
+        logs.push(log);
+      }
+
+      expect(logs).toEqual([`Logs for TaskRun test-task-run-1:\n${podLogs}`]);
+      expect(mockK8sClient.getResource).toHaveBeenCalledWith(
+        'tekton.dev/v1beta1',
+        'PipelineRun',
+        'test-pipeline-run',
+        'default',
+      );
+      expect(mockK8sClient.getPodLogs).toHaveBeenCalledWith(
+        'test-pod-1',
+        'default',
+      );
+    });
+
+    it('should fetch logs for multiple task runs with podNames', async () => {
+      const pipelineRun: PipelineRun = {
+        apiVersion: 'tekton.dev/v1beta1',
+        kind: 'PipelineRun',
+        metadata: { name: 'multi-task-run-pipeline-run' },
+        status: {
+          taskRuns: {
+            'task-run-1': { podName: 'pod-1' },
+            'task-run-2': { podName: 'pod-2' },
+          },
+        },
+      } as PipelineRun;
+
+      const podLogs1 = 'Logs for pod-1';
+      const podLogs2 = 'Logs for pod-2';
+      mockK8sClient.getResource.mockResolvedValue(pipelineRun);
+      mockK8sClient.getPodLogs
+        .mockResolvedValueOnce(podLogs1)
+        .mockResolvedValueOnce(podLogs2);
+
+      const logs = [];
+      for await (const log of client.getPipelineRunLogs(
+        'multi-task-run-pipeline-run',
+        'default',
+      )) {
+        logs.push(log);
+      }
+
+      expect(logs).toEqual([
+        `Logs for TaskRun task-run-1:\n${podLogs1}`,
+        `Logs for TaskRun task-run-2:\n${podLogs2}`,
+      ]);
+      expect(mockK8sClient.getResource).toHaveBeenCalledWith(
+        'tekton.dev/v1beta1',
+        'PipelineRun',
+        'multi-task-run-pipeline-run',
+        'default',
+      );
+      expect(mockK8sClient.getPodLogs).toHaveBeenNthCalledWith(
+        1,
+        'pod-1',
+        'default',
+      );
+      expect(mockK8sClient.getPodLogs).toHaveBeenNthCalledWith(
+        2,
+        'pod-2',
+        'default',
+      );
+    });
+
+    it('should not yield any logs when PipelineRun has no taskRuns', async () => {
+      const pipelineRun: PipelineRun = {
+        apiVersion: 'tekton.dev/v1beta1',
+        kind: 'PipelineRun',
+        metadata: { name: 'no-taskruns-pipeline-run' },
+        status: {
+          // taskRuns is undefined
+        },
+      } as PipelineRun;
+
+      mockK8sClient.getResource.mockResolvedValue(pipelineRun);
+
+      const logs = [];
+      for await (const log of client.getPipelineRunLogs(
+        'no-taskruns-pipeline-run',
+        'default',
+      )) {
+        logs.push(log);
+      }
+
+      expect(logs).toEqual([]);
+      expect(mockK8sClient.getResource).toHaveBeenCalledWith(
+        'tekton.dev/v1beta1',
+        'PipelineRun',
+        'no-taskruns-pipeline-run',
+        'default',
+      );
+      expect(mockK8sClient.getPodLogs).not.toHaveBeenCalled();
+    });
+
+    it('should skip task runs without podName and fetch logs for others', async () => {
+      const pipelineRun: PipelineRun = {
+        apiVersion: 'tekton.dev/v1beta1',
+        kind: 'PipelineRun',
+        metadata: { name: 'partial-taskruns-pipeline-run' },
+        status: {
+          taskRuns: {
+            'task-run-1': { podName: 'pod-1' },
+            'task-run-2': {}, // podName is missing
+          },
+        },
+      } as PipelineRun;
+
+      const podLogs1 = 'Logs for pod-1';
+      mockK8sClient.getResource.mockResolvedValue(pipelineRun);
+      mockK8sClient.getPodLogs.mockResolvedValue(podLogs1);
+
+      const logs = [];
+      for await (const log of client.getPipelineRunLogs(
+        'partial-taskruns-pipeline-run',
+        'default',
+      )) {
+        logs.push(log);
+      }
+
+      expect(logs).toEqual([`Logs for TaskRun task-run-1:\n${podLogs1}`]);
+      expect(mockK8sClient.getResource).toHaveBeenCalledWith(
+        'tekton.dev/v1beta1',
+        'PipelineRun',
+        'partial-taskruns-pipeline-run',
+        'default',
+      );
+      expect(mockK8sClient.getPodLogs).toHaveBeenCalledWith('pod-1', 'default');
+      expect(mockK8sClient.getPodLogs).toHaveBeenCalledTimes(1);
+    });
+
+    it('should not yield any logs when PipelineRun has an empty taskRuns object', async () => {
+      const pipelineRun: PipelineRun = {
+        apiVersion: 'tekton.dev/v1beta1',
+        kind: 'PipelineRun',
+        metadata: { name: 'empty-taskruns-pipeline-run' },
+        status: {
+          taskRuns: {},
+        },
+      } as PipelineRun;
+
+      mockK8sClient.getResource.mockResolvedValue(pipelineRun);
+
+      const logs = [];
+      for await (const log of client.getPipelineRunLogs(
+        'empty-taskruns-pipeline-run',
+        'default',
+      )) {
+        logs.push(log);
+      }
+
+      expect(logs).toEqual([]);
+      expect(mockK8sClient.getResource).toHaveBeenCalledWith(
+        'tekton.dev/v1beta1',
+        'PipelineRun',
+        'empty-taskruns-pipeline-run',
+        'default',
+      );
+      expect(mockK8sClient.getPodLogs).not.toHaveBeenCalled();
+    });
+
+    it('should fetch logs for TaskRuns with podNames and skip others', async () => {
+      const pipelineRun: PipelineRun = {
+        apiVersion: 'tekton.dev/v1beta1',
+        kind: 'PipelineRun',
+        metadata: { name: 'mixed-taskruns-pipeline-run' },
+        status: {
+          taskRuns: {
+            'task-run-1': { podName: 'pod-1' },
+            'task-run-2': {}, // No podName
+            'task-run-3': { podName: 'pod-3' },
+          },
+        },
+      } as PipelineRun;
+
+      const podLogs1 = 'Logs for pod-1';
+      const podLogs3 = 'Logs for pod-3';
+      mockK8sClient.getResource.mockResolvedValue(pipelineRun);
+      mockK8sClient.getPodLogs
+        .mockResolvedValueOnce(podLogs1)
+        .mockResolvedValueOnce(podLogs3);
+
+      const logs = [];
+      for await (const log of client.getPipelineRunLogs(
+        'mixed-taskruns-pipeline-run',
+        'default',
+      )) {
+        logs.push(log);
+      }
+
+      expect(logs).toEqual([
+        `Logs for TaskRun task-run-1:\n${podLogs1}`,
+        `Logs for TaskRun task-run-3:\n${podLogs3}`,
+      ]);
+      expect(mockK8sClient.getResource).toHaveBeenCalledWith(
+        'tekton.dev/v1beta1',
+        'PipelineRun',
+        'mixed-taskruns-pipeline-run',
+        'default',
+      );
+      expect(mockK8sClient.getPodLogs).toHaveBeenCalledWith('pod-1', 'default');
+      expect(mockK8sClient.getPodLogs).toHaveBeenCalledWith('pod-3', 'default');
+      expect(mockK8sClient.getPodLogs).toHaveBeenCalledTimes(2);
+    });
   });
 
   describe('Task operations', () => {
@@ -253,6 +568,162 @@ describe('TektonClient', () => {
         'test-task',
         'default',
       );
+    });
+
+    it('should get task status when status is defined', async () => {
+      const taskStatus: TaskStatus = {
+        steps: [
+          // Populate with test step states as per your TaskStatus definition
+          {
+            name: 'step1',
+            container: 'step1-container',
+            imageID: 'docker://step1-image-id',
+            terminated: {
+              exitCode: 0,
+              reason: 'Completed',
+              startedAt: '2024-04-25T10:00:00Z',
+              finishedAt: '2024-04-25T10:05:00Z',
+            },
+          },
+        ],
+        startTime: '2024-04-25T10:00:00Z',
+        completionTime: '2024-04-25T10:05:00Z',
+        podName: 'test-pod',
+        // Populate additional necessary fields as per your TaskStatus definition
+      };
+
+      const task: Task = {
+        metadata: { name: 'test-task' },
+        status: taskStatus,
+      } as Task;
+
+      mockK8sClient.getResource.mockResolvedValue(task);
+
+      const status = await client.getTaskStatus('test-task', 'default');
+
+      expect(status).toEqual(taskStatus);
+      expect(mockK8sClient.getResource).toHaveBeenCalledWith(
+        'tekton.dev/v1beta1',
+        'Task',
+        'test-task',
+        'default',
+      );
+    });
+
+    it('should throw ClientError when task has no status', async () => {
+      const task: Task = {
+        metadata: { name: 'test-task' },
+        // status is intentionally omitted to simulate undefined status
+      } as Task;
+
+      mockK8sClient.getResource.mockResolvedValue(task);
+
+      await expect(
+        client.getTaskStatus('test-task', 'default'),
+      ).rejects.toThrow(ClientError);
+
+      expect(mockK8sClient.getResource).toHaveBeenCalledWith(
+        'tekton.dev/v1beta1',
+        'Task',
+        'test-task',
+        'default',
+      );
+    });
+
+    it('should throw ClientError when task does not exist', async () => {
+      mockK8sClient.getResource.mockRejectedValue({
+        message: 'Not Found',
+        statusCode: 404,
+      });
+
+      await expect(
+        client.getTaskStatus('non-existent-task', 'default'),
+      ).rejects.toThrow(ClientError);
+
+      expect(mockK8sClient.getResource).toHaveBeenCalledWith(
+        'tekton.dev/v1beta1',
+        'Task',
+        'non-existent-task',
+        'default',
+      );
+    });
+
+    it('should handle unexpected API errors gracefully for getTaskStatus', async () => {
+      mockK8sClient.getResource.mockRejectedValue(
+        new Error('Internal Server Error'),
+      );
+
+      await expect(
+        client.getTaskStatus('test-task', 'default'),
+      ).rejects.toThrow(ClientError);
+
+      expect(mockK8sClient.getResource).toHaveBeenCalledWith(
+        'tekton.dev/v1beta1',
+        'Task',
+        'test-task',
+        'default',
+      );
+    });
+
+    it('should throw ClientError when fetching logs for a task run fails', async () => {
+      const pipelineRun: PipelineRun = {
+        apiVersion: 'tekton.dev/v1beta1',
+        kind: 'PipelineRun',
+        metadata: { name: 'error-taskrun-pipeline-run' },
+        status: {
+          taskRuns: {
+            'task-run-1': { podName: 'pod-1' },
+          },
+        },
+      } as PipelineRun;
+
+      mockK8sClient.getResource.mockResolvedValue(pipelineRun);
+      mockK8sClient.getPodLogs.mockRejectedValue(
+        new Error('Failed to fetch pod logs'),
+      );
+
+      const logs = [];
+      await expect(async () => {
+        for await (const log of client.getPipelineRunLogs(
+          'error-taskrun-pipeline-run',
+          'default',
+        )) {
+          logs.push(log);
+        }
+      }).rejects.toThrow(ClientError);
+
+      expect(mockK8sClient.getResource).toHaveBeenCalledWith(
+        'tekton.dev/v1beta1',
+        'PipelineRun',
+        'error-taskrun-pipeline-run',
+        'default',
+      );
+      expect(mockK8sClient.getPodLogs).toHaveBeenCalledWith('pod-1', 'default');
+    });
+
+    it('should throw ClientError when fetching PipelineRun fails', async () => {
+      mockK8sClient.getResource.mockRejectedValue({
+        message: 'Not Found',
+        statusCode: 404,
+      });
+
+      const logs = [];
+      await expect(async () => {
+        for await (const log of client.getPipelineRunLogs(
+          'non-existent-pipeline-run',
+          'default',
+        )) {
+          logs.push(log);
+        }
+      }).rejects.toThrow(ClientError);
+
+      expect(mockK8sClient.getResource).toHaveBeenCalledWith(
+        'tekton.dev/v1beta1',
+        'PipelineRun',
+        'non-existent-pipeline-run',
+        'default',
+      );
+      expect(mockK8sClient.getPodLogs).not.toHaveBeenCalled();
     });
   });
 

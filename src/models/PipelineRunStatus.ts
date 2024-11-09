@@ -20,6 +20,42 @@ export enum PipelineRunStatusEnum {
    * Indicates that the PipelineRun was stopped intentionally.
    */
   Stopped = 'PipelineRunStopped',
+
+  /**
+   * Indicates that the PipelineRun has succeeded.
+   */
+  Succeeded = 'PipelineRunSucceeded',
+
+  /**
+   * Indicates that the PipelineRun has failed.
+   */
+  Failed = 'PipelineRunFailed',
+
+  /**
+   * Indicates that the PipelineRun is running.
+   */
+  Running = 'PipelineRunRunning',
+
+  /**
+   * Indicates that the PipelineRun is waiting for a resource to become available.
+   */
+
+  Waiting = 'PipelineRunWaiting',
+
+  /**
+   * Indicates that the PipelineRun has an unknown status.
+   */
+  Unknown = 'PipelineRunUnknown',
+
+  /**
+   * Indicates that the PipelineRun has been skipped.
+   */
+  Skipped = 'PipelineRunSkipped',
+
+  /**
+   * Indicates that the PipelineRun has been triggered.
+   */
+  Triggered = 'PipelineRunTriggered',
 }
 
 /**
@@ -61,6 +97,11 @@ export interface PipelineRunStatus {
    * A list of tasks that were skipped during execution, with reasons for skipping each task.
    */
   skippedTasks?: SkippedTask[];
+
+  /**
+   * The overall status of the PipelineRun, based on the status of its TaskRuns.
+   */
+  overallStatus?: PipelineRunStatusEnum;
 }
 
 /**

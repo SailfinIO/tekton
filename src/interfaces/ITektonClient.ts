@@ -3,9 +3,11 @@ import {
   Pipeline,
   PipelineResource,
   PipelineRun,
+  PipelineRunStatus,
   Task,
   TaskRun,
   WatchEvent,
+  TaskRunStatus,
 } from '../models';
 
 /**
@@ -92,6 +94,17 @@ export interface ITektonClient {
   getPipelineRun(name: string, namespace: string): Promise<PipelineRun>;
 
   /**
+   * Retrieves the status of a pipeline run by name.
+   * @param name - The name of the pipeline run.
+   * @param namespace - The namespace of the pipeline run.
+   * @returns {PipelineRunStatus} A promise that resolves to the status of the requested PipelineRun.
+   */
+  getPipelineRunStatus(
+    name: string,
+    namespace: string,
+  ): Promise<PipelineRunStatus>;
+
+  /**
    * Lists all pipeline runs in the specified namespace.
    * @param namespace - The namespace to list pipeline runs from.
    * @returns A promise that resolves to an array of PipelineRuns.
@@ -126,6 +139,14 @@ export interface ITektonClient {
    * @returns A promise that resolves to the requested Task.
    */
   getTask(name: string, namespace: string): Promise<Task>;
+
+  /**
+   * Retrieves the status of a task by name.
+   * @param name - The name of the task.
+   * @param namespace - The namespace of the task.
+   * @returns {TaskRunStatus} A promise that resolves to the status of the requested Task.
+   */
+  getTaskStatus(name: string, namespace: string): Promise<TaskRunStatus>;
 
   /**
    * Lists all tasks in the specified namespace.

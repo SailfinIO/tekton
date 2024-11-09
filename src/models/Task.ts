@@ -8,6 +8,7 @@ import { WorkspaceDeclaration } from './WorkspaceDeclaration';
 import { EnvVar } from './EnvVar';
 import { VolumeMount } from './VolumeMount';
 import { ResourceRequirements } from './ResourceRequirements';
+import { StepState, TaskRunStatus, TaskRunStatusEnum } from './TaskRunStatus';
 
 /**
  * Defines the specification for a Tekton Task, including its steps, parameters, workspaces, results, and sidecars.
@@ -168,7 +169,16 @@ export interface SecretEnvSource {
  * Represents the current status of a Tekton Task.
  * This interface is currently empty but may be extended in the future to include additional status fields.
  */
-export interface TaskStatus {}
+export interface TaskStatus {
+  steps?: StepState[];
+  startTime?: string;
+  completionTime?: string;
+  podName?: string;
+  taskResults?: TaskResult[];
+  retriesStatus?: TaskRunStatus[];
+  overallStatus?: TaskRunStatusEnum; // Optional if mapping is implemented
+  // Add other relevant fields as per Tekton's API
+}
 
 /**
  * Represents a Tekton Task resource, defining a set of steps, parameters, workspaces, and results that form a reusable workflow unit.

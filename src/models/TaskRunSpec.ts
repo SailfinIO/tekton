@@ -1,6 +1,7 @@
 import { Param } from './Param';
 import { PodTemplate } from './PodTemplate';
 import { TaskSpec } from './Task';
+import { TaskRunStatusEnum } from './TaskRunStatus';
 import { WorkspaceBinding } from './WorkspaceBinding';
 
 /**
@@ -68,4 +69,10 @@ export interface TaskRunSpec {
      */
     completion?: string;
   };
+
+  /**
+   * The desired status of the TaskRun, such as "Running" or "Cancelled".
+   * This can be used to pause, resume, or cancel a TaskRun.
+   */
+  status?: TaskRunStatusEnum;
 }
