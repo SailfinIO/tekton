@@ -1,19 +1,35 @@
 // src/utils/KubeConfigReader.ts
 
-import { promises as fs } from 'fs';
 import { ResolvedKubeConfig } from '../models';
 import { YamlParser } from './YamlParser';
 import { Logger } from './Logger';
 import * as path from 'path';
+import {
+  ConfigFileNotFoundError,
+  InvalidConfigError,
+  ParsingError,
+} from '../errors';
+import { IFileSystem, ILogger } from '../interfaces';
+import { FileSystem } from './FileSystem';
 
 export class KubeConfigReader {
   private kubeConfigPath: string;
-  readonly logger = new Logger(KubeConfigReader.name);
+  public static logger: ILogger;
+  private fileSystem: IFileSystem;
+  private yamlParser: typeof YamlParser;
 
-  constructor(kubeConfigPath?: string) {
+  constructor(
+    kubeConfigPath?: string,
+    fsInstance: IFileSystem = new FileSystem(),
+    yamlParser: typeof YamlParser = YamlParser,
+    logger: Logger = new Logger(KubeConfigReader.name),
+  ) {
     this.kubeConfigPath =
       kubeConfigPath ||
       path.join(process.env.HOME || '/root', '.kube', 'config');
+    this.fileSystem = fsInstance;
+    this.yamlParser = yamlParser;
+    KubeConfigReader.logger = logger;
   }
 
   private mapKeys(obj: any): any {
@@ -31,15 +47,28 @@ export class KubeConfigReader {
     }
   }
 
-  public async getKubeConfig(): Promise<ResolvedKubeConfig | null> {
+  public async getKubeConfig(): Promise<ResolvedKubeConfig> {
     try {
-      const fileContent = await fs.readFile(this.kubeConfigPath, 'utf8');
-      const rawConfig = YamlParser.parse(fileContent);
-      const config: any = this.mapKeys(rawConfig); // Adjusted to 'any' for flexibility
+      const fileContent = await this.fileSystem.readFile(
+        this.kubeConfigPath,
+        'utf8',
+      );
+      const rawConfig = this.yamlParser.parse(fileContent);
+      const config: any = this.mapKeys(rawConfig);
+
+      // Validate presence of required fields
+      if (!config.currentContext) {
+        KubeConfigReader.logger.error(
+          'No currentContext is set in kubeconfig.',
+        );
+        throw new InvalidConfigError('No currentContext is set in kubeconfig.');
+      }
 
       const currentContextName = config.currentContext;
       if (!currentContextName) {
-        this.logger.error(`No currentContext is set in kubeconfig.`);
+        KubeConfigReader.logger.error(
+          `No currentContext is set in kubeconfig.`,
+        );
         return null;
       }
 
@@ -48,7 +77,7 @@ export class KubeConfigReader {
       )?.context;
 
       if (!context) {
-        this.logger.error(
+        KubeConfigReader.logger.error(
           `Context '${currentContextName}' not found in kubeconfig.`,
         );
         return null;
@@ -60,7 +89,7 @@ export class KubeConfigReader {
       const cluster = clusterEntry?.cluster;
 
       if (!cluster) {
-        this.logger.error(
+        KubeConfigReader.logger.error(
           `Cluster '${context.cluster}' not found in kubeconfig.`,
         );
         return null;
@@ -70,7 +99,9 @@ export class KubeConfigReader {
       const user = userEntry?.user;
 
       if (!user) {
-        this.logger.error(`User '${context.user}' not found in kubeconfig.`);
+        KubeConfigReader.logger.error(
+          `User '${context.user}' not found in kubeconfig.`,
+        );
         return null;
       }
 
@@ -80,14 +111,17 @@ export class KubeConfigReader {
       };
     } catch (error: any) {
       if (error.code === 'ENOENT') {
-        // File does not exist
-        this.logger.warn(
-          `Kubeconfig file not found at path: ${this.kubeConfigPath}`,
+        throw new ConfigFileNotFoundError(this.kubeConfigPath);
+      } else if (error instanceof SyntaxError) {
+        throw new ParsingError(
+          'Failed to parse kubeconfig YAML.',
+          error.message,
         );
-        return null;
+      } else if (error instanceof InvalidConfigError) {
+        throw error; // Re-throw specific config errors
       } else {
-        this.logger.error(`Failed to read kubeconfig: ${error.message}`);
-        return null;
+        KubeConfigReader.logger.error(`Unexpected error: ${error.message}`);
+        throw new Error(`Failed to read kubeconfig: ${error.message}`);
       }
     }
   }
@@ -101,7 +135,7 @@ export class KubeConfigReader {
     // Helper function to check file existence
     const fileExists = async (filePath: string): Promise<boolean> => {
       try {
-        await fs.access(filePath);
+        await this.fileSystem.access(filePath);
         return true;
       } catch {
         return false;
@@ -111,13 +145,13 @@ export class KubeConfigReader {
     // Helper function to read file content safely
     const safeReadFile = async (
       filePath: string,
-      encoding: BufferEncoding = 'utf8',
+      encoding?: BufferEncoding,
     ): Promise<string | Buffer> => {
       try {
-        const content = await fs.readFile(filePath, encoding);
+        const content = await this.fileSystem.readFile(filePath, encoding);
         return content;
       } catch (error: any) {
-        this.logger.error(
+        KubeConfigReader.logger.error(
           `Failed to read file at ${filePath}: ${error.message}`,
         );
         throw new Error(`Failed to read file at ${filePath}: ${error.message}`);
@@ -145,37 +179,57 @@ export class KubeConfigReader {
       const inCluster = await isInCluster();
 
       if (!inCluster) {
-        this.logger.error('Not running inside a Kubernetes cluster.');
+        KubeConfigReader.logger.error(
+          'Not running inside a Kubernetes cluster.',
+        );
+        if (
+          !process.env.KUBERNETES_SERVICE_HOST ||
+          !process.env.KUBERNETES_SERVICE_PORT
+        ) {
+          throw new Error(
+            'KUBERNETES_SERVICE_HOST or KUBERNETES_SERVICE_PORT environment variables are not set.',
+          );
+        }
         throw new Error('In-cluster configuration is not available.');
       }
 
       const [token, ca, namespace] = await Promise.all([
-        safeReadFile(tokenPath, 'utf8'),
-        safeReadFile(caPath, null),
-        safeReadFile(namespacePath, 'utf8'),
+        safeReadFile(tokenPath, 'utf8'), // Read as string
+        safeReadFile(caPath), // Read as Buffer (no encoding)
+        safeReadFile(namespacePath, 'utf8'), // Read as string
       ]);
-
       // Validate token and CA
-      if (!token || typeof token !== 'string') {
-        this.logger.error('Service account token is missing or invalid.');
+      if (!token || typeof token !== 'string' || token.trim() === '') {
+        KubeConfigReader.logger.error(
+          'Service account token is missing or invalid.',
+        );
         throw new Error('Service account token is missing or invalid.');
       }
 
       if (!ca || !(ca instanceof Buffer)) {
-        this.logger.error('CA certificate is missing or invalid.');
-        throw new Error('CA certificate is missing or invalid.');
+        KubeConfigReader.logger.error('CA certificate is missing or invalid.');
+        throw new Error(
+          'In-cluster configuration loading failed: CA certificate is missing or invalid.',
+        );
+      }
+
+      if (ca.length === 0) {
+        KubeConfigReader.logger.error('CA certificate data is empty.');
+        throw new Error(
+          'In-cluster configuration loading failed: CA certificate data is empty.',
+        );
       }
 
       // Optionally, validate namespace
       if (!namespace || typeof namespace !== 'string') {
-        this.logger.warn('Namespace is missing or invalid.');
+        KubeConfigReader.logger.warn('Namespace is missing or invalid.');
       }
 
       if (
         !process.env.KUBERNETES_SERVICE_HOST ||
         !process.env.KUBERNETES_SERVICE_PORT
       ) {
-        this.logger.error(
+        KubeConfigReader.logger.error(
           'KUBERNETES_SERVICE_HOST or KUBERNETES_SERVICE_PORT environment variables are not set.',
         );
         throw new Error(
@@ -195,7 +249,10 @@ export class KubeConfigReader {
         },
       };
     } catch (error: any) {
-      this.logger.error('Failed to load in-cluster configuration', error);
+      KubeConfigReader.logger.error(
+        'Failed to load in-cluster configuration',
+        error,
+      );
       throw new Error(
         `In-cluster configuration loading failed: ${error.message}`,
       );

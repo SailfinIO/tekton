@@ -31,6 +31,8 @@
 - [Logging](#logging)
   - [Log Levels](#log-levels)
   - [Configuring Log Level](#configuring-log-level)
+- [Testing](#testing)
+  - [Unit Tests](#unit-tests)
 - [Contributing](#contributing)
 - [Support](#support)
 - [License](#license)
@@ -546,13 +548,13 @@ The `TektonClient` class provides methods to interact with Tekton resources.
 The package provides comprehensive error handling through custom error classes:
 
 - **ApiError**: Represents an error response from the Kubernetes API.
-- **TektonClientError**: Represents an error response from the Tekton API.
+- **ClientError**: Represents an error response from the Tekton/Kubernetes API.
 - **NetworkError**: Represents a network-related error.
 
 ### Example: Handling Errors
 
 ```typescript
-import { TektonClient, TektonClientError } from '@sailfin/tekton';
+import { TektonClient, ClientError } from '@sailfin/tekton';
 
 (async () => {
   try {
@@ -561,7 +563,7 @@ import { TektonClient, TektonClientError } from '@sailfin/tekton';
       namespace: 'default',
     });
   } catch (error) {
-    if (error instanceof TektonClientError) {
+    if (error instanceof ClientError) {
       console.error(`Tekton Client Error: ${error.message}`);
       console.error(`Method: ${error.method}`);
       console.error(`Resource: ${error.resourceName}`);
@@ -602,6 +604,16 @@ import { KubernetesClient, LogLevel } from '@sailfin/tekton';
 
   // Now, DEBUG and above logs will be emitted
 })();
+```
+
+## Testing
+
+### Unit Tests
+
+To run the unit tests, use the following command:
+
+```bash
+npm run test
 ```
 
 ## Contributing

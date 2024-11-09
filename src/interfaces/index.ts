@@ -4,7 +4,7 @@
  */
 
 export * from './ITektonClient';
-// export * from './ILogger';
+export * from './ILogger';
 export * from './IKubernetesClient';
-export * from './KubernetesClientOptions';
-export * from './TektonClientOptions';
+export * from './ClientOptions';
+export * from './IFileSystem';

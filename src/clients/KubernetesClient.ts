@@ -2,24 +2,29 @@
 
 import { request, RequestOptions } from 'https';
 import { URL } from 'url';
-import { ResolvedKubeConfig, KubernetesResource, WatchEvent } from './models';
-import { KubeConfigReader } from './utils';
-import { Logger } from './utils';
-import { readFileSync } from 'fs';
-import { ApiError } from './errors';
-import { IKubernetesClient, KubernetesClientOptions } from './interfaces';
+import { ResolvedKubeConfig, KubernetesResource, WatchEvent } from '../models';
+import { KubeConfigReader, FileSystem, Logger } from '../utils';
+import { ApiError } from '../errors';
+import {
+  IFileSystem,
+  IKubernetesClient,
+  KubernetesClientOptions,
+} from '../interfaces';
 import { Readable } from 'stream';
-import { LogLevel } from './enums';
+import { HttpStatus, LogLevel } from '../enums';
 
 export class KubernetesClient implements IKubernetesClient {
   private kubeConfig: ResolvedKubeConfig;
-  private readonly logger = new Logger(KubernetesClient.name);
+  private readonly logger: Logger;
+  private fileSystem: IFileSystem;
 
   private constructor(
     kubeConfig: ResolvedKubeConfig,
+    fsInstance: IFileSystem = new FileSystem(),
     logLevel: LogLevel = LogLevel.INFO,
   ) {
     this.kubeConfig = kubeConfig;
+    this.fileSystem = fsInstance;
     this.logger = new Logger(KubernetesClient.name, logLevel);
     this.logger.debug(
       'KubernetesClient initialized with provided kubeConfig and logLevel',
@@ -33,47 +38,57 @@ export class KubernetesClient implements IKubernetesClient {
    * @param kubeConfigPath Optional path to kubeconfig file.
    */
   public static async create(
-    options?: KubernetesClientOptions,
+    options?: KubernetesClientOptions & { fileSystem?: IFileSystem },
   ): Promise<KubernetesClient> {
-    const { kubeConfigPath, logLevel } = options || {};
+    const { kubeConfigPath, logLevel, fileSystem } = options || {};
     const reader = new KubeConfigReader(kubeConfigPath);
     let kubeConfig: ResolvedKubeConfig | null = null;
 
     if (kubeConfigPath) {
-      reader.logger.info(
+      KubeConfigReader.logger.info(
         `Attempting to load kubeconfig from path: ${kubeConfigPath}`,
       );
       // Attempt to load from the specified kubeConfigPath
       kubeConfig = await reader.getKubeConfig();
       if (!kubeConfig) {
-        reader.logger.error(
+        KubeConfigReader.logger.error(
           `Failed to load kubeconfig from path: ${kubeConfigPath}`,
         );
         throw new Error(
           `Failed to load kubeconfig from path: ${kubeConfigPath}`,
         );
       }
-      reader.logger.info(`Loaded kube config from path: ${kubeConfigPath}`);
+      KubeConfigReader.logger.info(
+        `Loaded kube config from path: ${kubeConfigPath}`,
+      );
     } else {
-      reader.logger.info('Attempting to load kubeconfig from default path.');
+      KubeConfigReader.logger.info(
+        'Attempting to load kubeconfig from default path.',
+      );
       // Attempt to load from the default kubeconfig path
       kubeConfig = await reader.getKubeConfig();
       if (kubeConfig) {
-        reader.logger.info('Loaded kube config from default path.');
+        KubeConfigReader.logger.info('Loaded kube config from default path.');
       } else {
-        reader.logger.warn(
+        KubeConfigReader.logger.warn(
           'Default kube config not found. Attempting to load in-cluster config.',
         );
         // Fallback to in-cluster configuration
         kubeConfig = await reader.getInClusterConfig();
-        reader.logger.info('Loaded in-cluster kube config.');
+        KubeConfigReader.logger.info('Loaded in-cluster kube config.');
       }
     }
 
-    return new KubernetesClient(kubeConfig, logLevel);
+    return new KubernetesClient(
+      kubeConfig,
+      fileSystem || new FileSystem(),
+      logLevel,
+    );
   }
-
-  private getRequestOptions(method: string, path: string): RequestOptions {
+  private async getRequestOptions(
+    method: string,
+    path: string,
+  ): Promise<RequestOptions> {
     this.logger.debug(
       `Building request options for ${method} request to path: ${path}`,
     );
@@ -102,7 +117,7 @@ export class KubernetesClient implements IKubernetesClient {
       rejectUnauthorized: true,
     };
 
-    this.attachCertificates(options, cluster, user);
+    await this.attachCertificates(options, cluster, user);
     this.logger.debug(
       `Request options for ${method} request: ${JSON.stringify(options)}`,
     );
@@ -110,15 +125,15 @@ export class KubernetesClient implements IKubernetesClient {
     return options;
   }
 
-  private attachCertificates(
+  private async attachCertificates(
     options: RequestOptions,
     cluster: ResolvedKubeConfig['cluster'],
     user: ResolvedKubeConfig['user'],
-  ): void {
+  ): Promise<void> {
     this.logger.debug('Attaching certificates to request options');
     if (user.clientCertificate) {
       this.logger.debug('Adding client certificate from file');
-      options.cert = readFileSync(user.clientCertificate);
+      options.cert = await this.fileSystem.readFile(user.clientCertificate);
     } else if (user.clientCertificateData) {
       this.logger.debug('Adding client certificate from base64 data');
       options.cert = Buffer.from(user.clientCertificateData, 'base64');
@@ -126,7 +141,7 @@ export class KubernetesClient implements IKubernetesClient {
 
     if (user.clientKey) {
       this.logger.debug('Adding client key from file');
-      options.key = readFileSync(user.clientKey);
+      options.key = await this.fileSystem.readFile(user.clientKey);
     } else if (user.clientKeyData) {
       this.logger.debug('Adding client key from base64 data');
       options.key = Buffer.from(user.clientKeyData, 'base64');
@@ -134,7 +149,7 @@ export class KubernetesClient implements IKubernetesClient {
 
     if (cluster.certificateAuthority) {
       this.logger.debug('Adding cluster CA certificate from file');
-      options.ca = readFileSync(cluster.certificateAuthority);
+      options.ca = await this.fileSystem.readFile(cluster.certificateAuthority);
     } else if (cluster.certificateAuthorityData) {
       this.logger.debug('Adding cluster CA certificate from base64 data');
       options.ca = Buffer.from(cluster.certificateAuthorityData, 'base64');
@@ -151,11 +166,12 @@ export class KubernetesClient implements IKubernetesClient {
     method: string,
     path: string,
     body?: any,
+    parseJson: boolean = true,
   ): Promise<T> {
     return this.executeWithLogging(
-      () => {
+      async () => {
         this.logger.debug(`Preparing to make ${method} request to ${path}`);
-        const options = this.getRequestOptions(method, path);
+        const options = await this.getRequestOptions(method, path);
         return new Promise((resolve, reject) => {
           const req = request(options, (res) => {
             let data = '';
@@ -174,9 +190,15 @@ export class KubernetesClient implements IKubernetesClient {
                 res.statusCode < 300
               ) {
                 try {
-                  const parsedData = JSON.parse(data);
-                  resolve(parsedData);
-                } catch (e) {
+                  if (res.statusCode === 204) {
+                    resolve(undefined as any); // No content
+                  } else if (parseJson) {
+                    const parsedData = JSON.parse(data);
+                    resolve(parsedData);
+                  } else {
+                    resolve(data as any);
+                  }
+                } catch (e: any) {
                   this.logger.error(
                     `Failed to parse response JSON: ${e.message}`,
                   );
@@ -190,7 +212,7 @@ export class KubernetesClient implements IKubernetesClient {
                 );
                 reject(
                   new ApiError(
-                    res.statusCode || 500,
+                    res.statusCode || HttpStatus.INTERNAL_SERVER_ERROR,
                     `Request failed with status code ${res.statusCode}`,
                     data,
                   ),
@@ -344,7 +366,7 @@ export class KubernetesClient implements IKubernetesClient {
       namespace,
     );
     return this.executeWithLogging(
-      () => this.makeRequest<void>('DELETE', resourcePath),
+      () => this.makeRequest<void>('DELETE', resourcePath, undefined, false), // parseJson=false
       `Deleting resource: ${kind} with name: ${name} in namespace: ${namespace}`,
       `Failed to delete resource ${kind} with name ${name}`,
       'deleteResource',
@@ -408,7 +430,7 @@ export class KubernetesClient implements IKubernetesClient {
       path += `?container=${encodeURIComponent(container)}`;
     }
     return this.executeWithLogging(
-      () => this.makeRequest<string>('GET', path),
+      () => this.makeRequest<string>('GET', path, undefined, false), // parseJson=false
       `Fetching logs for pod: ${name} in namespace: ${namespace}`,
       `Failed to fetch logs for pod ${name}`,
       'getPodLogs',
@@ -437,7 +459,7 @@ export class KubernetesClient implements IKubernetesClient {
     }
     const path = `${resourcePath}?${queryParams.join('&')}`;
 
-    const options = this.getRequestOptions('GET', path);
+    const options = await this.getRequestOptions('GET', path);
 
     const logger = this.logger;
     const stream = new Readable({
@@ -462,12 +484,16 @@ export class KubernetesClient implements IKubernetesClient {
       this.logger.debug(`Received watch event chunk of size: ${data.length}`);
       for (const line of data.split('\n')) {
         if (line.trim()) {
-          yield JSON.parse(line) as WatchEvent<T>;
+          try {
+            yield JSON.parse(line) as WatchEvent<T>;
+          } catch (e: any) {
+            this.logger.error(`Failed to parse watch event JSON: ${e.message}`);
+            // Optionally, you can choose to throw the error or continue
+          }
         }
       }
     }
   }
-
   private kindToResourceName(kind: string): string {
     const kindToResourceNameMap: { [kind: string]: string } = {
       Pod: 'pods',

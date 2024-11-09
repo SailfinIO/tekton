@@ -1,12 +1,12 @@
-import { IKubernetesClient } from './interfaces/IKubernetesClient';
+import { IKubernetesClient } from '../interfaces/IKubernetesClient';
 import { KubernetesClient } from './KubernetesClient';
 import {
   ITektonClient,
   GetOptions,
   ListOptions,
   TektonClientOptions,
-} from './interfaces';
-import { Logger } from './utils/Logger';
+} from '../interfaces';
+import { Logger } from '../utils/Logger';
 import {
   ClusterTask,
   Pipeline,
@@ -15,9 +15,9 @@ import {
   Task,
   TaskRun,
   WatchEvent,
-} from './models';
-import { TektonClientError } from './errors';
-import { LogLevel } from './enums';
+} from '../models';
+import { ClientError } from '../errors';
+import { LogLevel } from '../enums';
 
 export class TektonClient implements ITektonClient {
   private k8sClient: IKubernetesClient;
@@ -483,7 +483,7 @@ ${podLogs}`;
               `Error fetching logs for TaskRun ${taskRunName}: ${error.message}`,
               error,
             );
-            throw new TektonClientError(
+            throw new ClientError(
               `Failed to get logs for TaskRun ${taskRunName}: ${error.message}`,
               'getPipelineRunLogs',
               'TaskRun',
@@ -497,7 +497,7 @@ ${podLogs}`;
         `Error fetching pipeline run logs for ${name}: ${error.message}`,
         error,
       );
-      throw new TektonClientError(
+      throw new ClientError(
         `Failed to get pipeline run logs for ${name}: ${error.message}`,
         'getPipelineRunLogs',
         'PipelineRun',
@@ -543,12 +543,7 @@ ${podLogs}`;
       return result;
     } catch (error: any) {
       this.logger.error(`${errorMessage}: ${error.message}`, error);
-      throw new TektonClientError(
-        errorMessage,
-        method,
-        resourceName,
-        namespace,
-      );
+      throw new ClientError(errorMessage, method, resourceName, namespace);
     }
   }
 }
