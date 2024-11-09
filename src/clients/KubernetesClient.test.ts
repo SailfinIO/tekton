@@ -5,7 +5,8 @@ import { KubeConfigReader } from '../utils';
 import { ResolvedKubeConfig, KubernetesResource, WatchEvent } from '../models';
 import { ApiError } from '../errors';
 import https, { RequestOptions } from 'https';
-import { IFileSystem, ILogger } from '../interfaces';
+import { IFileSystem } from '../interfaces';
+import { ILogger } from '../interfaces/ILogger';
 import { EventEmitter, Readable } from 'stream';
 import { ClientRequest, IncomingMessage } from 'http';
 
