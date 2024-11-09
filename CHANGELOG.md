@@ -1,3 +1,12 @@
+## [1.0.11](https://github.com/SailfinIO/tekton/compare/v1.0.10...v1.0.11) (2024-11-09)
+
+
+### Bug Fixes
+
+* imports ([2f5fa50](https://github.com/SailfinIO/tekton/commit/2f5fa50c85c2769e8444fde2401280f92188b8bb))
+* increase code coverage on k8s client ([728255f](https://github.com/SailfinIO/tekton/commit/728255ffded32909978ff88b7685cb485f743d69))
+* tests for pem usage ([1aca32d](https://github.com/SailfinIO/tekton/commit/1aca32db6c8119c5b014354502230fb6903abed1))
+
 ## [1.0.10](https://github.com/SailfinIO/tekton/compare/v1.0.9...v1.0.10) (2024-11-09)
 
 
