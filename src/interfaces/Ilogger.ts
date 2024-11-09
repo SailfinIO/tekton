@@ -3,7 +3,7 @@ import { LogLevel } from '../enums';
 /**
  * Interface representing a customizable logger with multiple log levels.
  */
-export interface ILogger {
+interface ILogger {
   /**
    * Sets the log level for the logger, controlling which messages are logged.
    * @param level - The log level to set, which determines the minimum severity of logs that will be recorded.

@@ -9,8 +9,7 @@ import {
   InvalidConfigError,
   ParsingError,
 } from '../errors';
-import { IFileSystem } from '../interfaces';
-import { ILogger } from '../interfaces/ILogger';
+import { IFileSystem, ILogger } from '../interfaces';
 import { FileSystem } from './FileSystem';
 
 export class KubeConfigReader {
