@@ -1,3 +1,11 @@
+## [1.0.12](https://github.com/SailfinIO/tekton/compare/v1.0.11...v1.0.12) (2024-11-09)
+
+
+### Bug Fixes
+
+* add status retrieval ([5145031](https://github.com/SailfinIO/tekton/commit/51450311ca7b215746fcdcd9cc36efbb4375e81a))
+* ITektonClient missing methods and documentation ([7b99957](https://github.com/SailfinIO/tekton/commit/7b99957e159a1a0a992ed19a6eaad120b0033dfd))
+
 ## [1.0.11](https://github.com/SailfinIO/tekton/compare/v1.0.10...v1.0.11) (2024-11-09)
 
 
