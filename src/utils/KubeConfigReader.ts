@@ -69,7 +69,7 @@ export class KubeConfigReader {
         KubeConfigReader.logger.error(
           'No currentContext is set in kubeconfig.',
         );
-        throw new InvalidConfigError('No currentContext is set in kubeconfig.');
+        null;
       }
 
       const currentContextName = config.currentContext;

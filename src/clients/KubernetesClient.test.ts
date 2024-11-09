@@ -340,6 +340,21 @@ AQEBBQADggEPADCCAQoCggEBALw6NcMmsNqMYYGnIXJHjY58U0VThfqfzbjJGpYq
           client.getResource('v1', 'Pod', 'mock-pod'),
         ).rejects.toThrow(ApiError);
       });
+
+      it('should generate correct resource path for namespaced resources', async () => {
+        const client = await KubernetesClient.create({
+          kubeConfigPath: 'mock-path',
+          fileSystem: mockFileSystem,
+        });
+        const path = client['getResourcePath'](
+          'v1',
+          'Pod',
+          'mock-pod',
+          'mock-namespace',
+        );
+
+        expect(path).toBe('/api/v1/namespaces/mock-namespace/pods/mock-pod');
+      });
     });
 
     describe('createResource', () => {
@@ -435,6 +450,22 @@ AQEBBQADggEPADCCAQoCggEBALw6NcMmsNqMYYGnIXJHjY58U0VThfqfzbjJGpYq
         await expect(
           client.getPodLogs('mock-pod', 'mock-namespace'),
         ).rejects.toThrow(ApiError);
+      });
+
+      it('should fetch logs of a specific pod', async () => {
+        const mockLogs = 'Sample pod logs';
+        mockHttpsRequest(200, mockLogs, false); // Plain text response
+
+        const client = await KubernetesClient.create({
+          fileSystem: mockFileSystem,
+        });
+        const logs = await client.getPodLogs(
+          'mock-pod',
+          'mock-namespace',
+          'mock-container',
+        );
+
+        expect(logs).toEqual(mockLogs);
       });
     });
 
