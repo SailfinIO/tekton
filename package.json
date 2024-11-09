@@ -1,6 +1,6 @@
 {
   "name": "@sailfin/tekton",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "description": "A Tekton and K8s client for Node.js",
   "author": "Michael Curtis <mpbcurtis@gmail.com>",
   "readme": "README.md",

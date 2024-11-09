@@ -1,3 +1,11 @@
+## [1.0.9](https://github.com/SailfinIO/tekton/compare/v1.0.8...v1.0.9) (2024-11-09)
+
+
+### Bug Fixes
+
+* add tests for pem utils ([5b8aec5](https://github.com/SailfinIO/tekton/commit/5b8aec52b9cbbe93654b879313e676b2cebfef2c))
+* increase coverage ([ff7eed2](https://github.com/SailfinIO/tekton/commit/ff7eed29bc771bb3c06b8b0d69bc6ace97f5eab9))
+
 ## [1.0.8](https://github.com/SailfinIO/tekton/compare/v1.0.7...v1.0.8) (2024-11-09)
 
 
