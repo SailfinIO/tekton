@@ -8,7 +8,6 @@ import {
   ClientError,
   KubeConfigError,
   NetworkError,
-  ParsingError,
 } from '../errors';
 import https, { RequestOptions } from 'https';
 import { IFileSystem, ILogger } from '../interfaces';
@@ -69,42 +68,23 @@ const createMockFileSystem = (): jest.Mocked<IFileSystem> => ({
 const kubeconfigYaml = `
 apiVersion: v1
 clusters:
-  - name: test-cluster
-    cluster:
-      server: https://localhost:6443
-      certificate-authority-data: |
-        -----BEGIN CERTIFICATE-----
-        MIIDdzCCAl+gAwIBAgIEbVYt0TANBgkqhkiG9w0BAQsFADBvMQswCQYDVQQGEwJV
-        UzELMAkGA1UECAwCTlkxCzAJBgNVBAcMAk5ZMQswCQYDVQQKDAJOWTELMAkGA1UE
-        CwwCTlkxCzAJBgNVBAMMAk5ZMB4XDTIxMDYxNTEyMjUyMVoXDTMxMDYxMzEyMjUy
-        MVowbzELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAk5ZMQswCQYDVQQHDAJOWTELMAkG
-        A1UECgwCTlkxCzAJBgNVBAsMAk5ZMQswCQYDVQQDDAJOWTCCASIwDQYJKoZIhvcN
-        AQEBBQADggEPADCCAQoCggEBALw6NcMmsNqMYYGnIXJHjY58U0VThfqfzbjJGpYq
-        ...
-        -----END CERTIFICATE-----
+- cluster:
+    certificate-authority-data: ${Buffer.from('valid-ca-cert').toString('base64')}
+    server: https://127.0.0.1:6443
+  name: test-cluster-1
 contexts:
-  - name: test-context
-    context:
-      cluster: test-cluster
-      user: test-user
-current-context: test-context
+- context:
+    cluster: test-cluster-1
+    user: test-cluster-1
+  name: test-cluster-1
+current-context: test-cluster-1
+kind: Config
+preferences: {}
 users:
-  - name: test-user
-    user:
-      client-certificate-data: |
-        -----BEGIN CERTIFICATE-----
-        MIIDdzCCAl+gAwIBAgIEbVYt0TANBgkqhkiG9w0BAQsFADBvMQswCQYDVQQGEwJV
-        UzELMAkGA1UECAwCTlkxCzAJBgNVBAcMAk5ZMQswCQYDVQQKDAJOWTELMAkGA1UE
-        CwwCTlkxCzAJBgNVBAMMAk5ZMB4XDTIxMDYxNTEyMjUyMVoXDTMxMDYxMzEyMjUy
-        MVowbzELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAk5ZMQswCQYDVQQHDAJOWTELMAkG
-        A1UECgwCTlkxCzAJBgNVBAsMAk5ZMQswCQYDVQQDDAJOWTCCASIwDQYJKoZIhvcN
-        AQEBBQADggEPADCCAQoCggEBALw6NcMmsNqMYYGnIXJHjY58U0VThfqfzbjJGpYq
-        ...
-        -----END CERTIFICATE-----
-      client-key-data: |
-        -----BEGIN PRIVATE KEY-----
-        MIIEvQIBADANBgkqhkiG9w0BAQEFAASC...
-        -----END PRIVATE KEY-----
+- name: test-cluster-1
+  user:
+    client-certificate-data: ${Buffer.from('valid-client-cert').toString('base64')}
+    client-key-data: ${Buffer.from('valid-client-key').toString('base64')}
 `;
 
 describe('KubernetesClient', () => {

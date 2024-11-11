@@ -10,13 +10,7 @@
 import { request, RequestOptions } from 'https';
 import { URL } from 'url';
 import { ResolvedKubeConfig, KubernetesResource, WatchEvent } from '../models';
-import {
-  FileSystem,
-  Logger,
-  PemUtils,
-  YamlParser,
-  KubeConfigReader,
-} from '../utils';
+import { FileSystem, Logger, PemUtils, KubeConfigReader } from '../utils';
 import {
   ApiError,
   ClientError,
@@ -31,7 +25,7 @@ import {
   KubernetesClientOptions,
 } from '../interfaces';
 import { Readable } from 'stream';
-import { HttpStatus, LogLevel } from '../enums';
+import { HttpStatus, LogLevel, PemType } from '../enums';
 import { KindToResourceNameMap } from '../constants';
 
 /**
@@ -101,12 +95,7 @@ export class KubernetesClient implements IKubernetesClient {
       logger = new Logger(KubernetesClient.name, logLevel),
     } = options || {};
 
-    const reader = new KubeConfigReader(
-      kubeConfigPath,
-      fileSystem,
-      YamlParser,
-      logger,
-    );
+    const reader = new KubeConfigReader(kubeConfigPath);
 
     let kubeConfig: ResolvedKubeConfig;
 
@@ -215,7 +204,7 @@ export class KubernetesClient implements IKubernetesClient {
     cluster: ResolvedKubeConfig['cluster'],
     user: ResolvedKubeConfig['user'],
   ): Promise<void> {
-    this.logger.debug('Attaching certificates to request options');
+    this.logger.debug('Attaching certificates and tokens to request options');
 
     // Attach Client Certificate
     if (user.clientCertificate) {
@@ -224,7 +213,7 @@ export class KubernetesClient implements IKubernetesClient {
         user.clientCertificate,
         'utf8',
       );
-      options.cert = PemUtils.pemToBuffer(pem, 'CERTIFICATE');
+      options.cert = PemUtils.pemToBuffer(pem, PemType.CERTIFICATE);
     } else if (user.clientCertificateData) {
       this.logger.debug('Adding client certificate from base64 data');
       options.cert = Buffer.from(user.clientCertificateData, 'base64');
@@ -234,7 +223,7 @@ export class KubernetesClient implements IKubernetesClient {
     if (user.clientKey) {
       this.logger.debug('Adding client key from file');
       const pem = await this.fileSystem.readFile(user.clientKey, 'utf8');
-      options.key = PemUtils.pemToBuffer(pem, 'PRIVATE KEY');
+      options.key = PemUtils.pemToBuffer(pem, PemType.PRIVATE_KEY);
     } else if (user.clientKeyData) {
       this.logger.debug('Adding client key from base64 data');
       options.key = Buffer.from(user.clientKeyData, 'base64');
@@ -247,10 +236,19 @@ export class KubernetesClient implements IKubernetesClient {
         cluster.certificateAuthority,
         'utf8',
       );
-      options.ca = PemUtils.pemToBuffer(pem, 'CERTIFICATE');
+      options.ca = PemUtils.pemToBuffer(pem, PemType.CERTIFICATE);
     } else if (cluster.certificateAuthorityData) {
       this.logger.debug('Adding cluster CA certificate from base64 data');
       options.ca = Buffer.from(cluster.certificateAuthorityData, 'base64');
+    }
+
+    // Attach Token for Exec-Based Authentication
+    if (user.token) {
+      this.logger.debug('Adding Bearer token for authentication');
+      options.headers = {
+        ...options.headers,
+        Authorization: `Bearer ${user.token}`,
+      };
     }
 
     if (!options.ca) {

@@ -1,38 +1,34 @@
 // src/utils/KubeConfigReader.ts
 
+import { join } from 'path';
+import { spawn } from 'child_process';
 import { ResolvedKubeConfig } from '../models';
-import { YamlParser } from './YamlParser';
-import { ILogger, IFileSystem } from '../interfaces';
+import { ILogger, IFileSystem, IYamlParser } from '../interfaces';
 import { FileSystem } from './FileSystem';
+import { Logger } from './Logger';
+import { YamlParser } from './YamlParser';
 import { PemUtils } from './PemUtils';
 import {
   ConfigFileNotFoundError,
+  ExecAuthError,
   InvalidConfigError,
-  ParsingError,
   KubeConfigError,
   NotInClusterError,
+  ParsingError,
+  PemConversionError,
+  PemFormatError,
 } from '../errors';
-import * as path from 'path';
-import { Logger } from './Logger';
+import { PemType } from '../enums';
 
 export class KubeConfigReader {
   private readonly kubeConfigPath: string;
-  private readonly fileSystem: IFileSystem;
-  private readonly yamlParser: typeof YamlParser;
-  protected readonly logger: ILogger;
+  private readonly fileSystem: IFileSystem = new FileSystem();
+  private readonly yamlParser: IYamlParser = new YamlParser();
+  protected readonly logger: ILogger = new Logger(KubeConfigReader.name);
 
-  constructor(
-    kubeConfigPath?: string,
-    fsInstance?: IFileSystem,
-    yamlParser: typeof YamlParser = YamlParser,
-    logger: ILogger = new Logger(KubeConfigReader.name),
-  ) {
+  constructor(kubeConfigPath?: string) {
     this.kubeConfigPath =
-      kubeConfigPath ||
-      path.join(process.env.HOME || '/root', '.kube', 'config');
-    this.fileSystem = fsInstance || new FileSystem();
-    this.yamlParser = yamlParser;
-    this.logger = logger;
+      kubeConfigPath || join(process.env.HOME || '/root', '.kube', 'config');
   }
 
   public async getKubeConfig(): Promise<ResolvedKubeConfig> {
@@ -40,109 +36,155 @@ export class KubeConfigReader {
       const rawConfig = await this.loadAndParseKubeConfig();
       const config = this.mapKeys(rawConfig);
 
-      const currentContextName = config.currentContext;
-      if (!currentContextName) {
-        throw new InvalidConfigError('No currentContext is set in kubeconfig.');
+      this.validateConfig(config);
+
+      const { cluster, user } = this.extractConfigDetails(config);
+
+      this.validateData(
+        cluster.certificateAuthorityData,
+        'certificateAuthorityData',
+      );
+
+      // Always convert certificateAuthorityData to PEM if it exists
+      const certificateAuthorityPem = cluster.certificateAuthorityData
+        ? this.convertBase64ToPem(
+            cluster.certificateAuthorityData,
+            PemType.CERTIFICATE,
+          )
+        : undefined;
+
+      let token: string | undefined;
+      let clientCertificatePem: string | undefined;
+      let clientKeyPem: string | undefined;
+
+      if (user.exec) {
+        // Handle exec-based authentication
+        token = await this.getExecToken(user.exec);
+      } else if (user.token) {
+        // Handle token-based authentication
+        token = user.token.trim();
+      } else {
+        // Handle client-certificate-based authentication
+        this.validateData(user.clientCertificateData, 'clientCertificateData');
+        this.validateData(user.clientKeyData, 'clientKeyData');
+
+        clientCertificatePem = user.clientCertificateData
+          ? this.convertBase64ToPem(
+              user.clientCertificateData,
+              PemType.CERTIFICATE,
+            )
+          : undefined;
+
+        clientKeyPem = user.clientKeyData
+          ? this.convertBase64ToPem(user.clientKeyData, PemType.PRIVATE_KEY)
+          : undefined;
       }
 
-      const context = this.getContext(config, currentContextName);
-      const cluster = this.getCluster(config, context.cluster);
-      const user = this.getUser(config, context.user);
+      const resolvedConfig: ResolvedKubeConfig = {
+        cluster: {
+          server: cluster.server,
+          certificateAuthorityData: cluster.certificateAuthorityData,
+          certificateAuthorityPem,
+        },
+        user: {
+          token,
+          clientCertificateData: user.clientCertificateData,
+          clientKeyData: user.clientKeyData,
+          clientCertificatePem,
+          clientKeyPem,
+        },
+      };
 
-      this.processUserPemData(user);
-      this.processClusterPemData(cluster);
-
-      return { cluster, user };
+      return resolvedConfig;
     } catch (error: any) {
-      if (error instanceof ConfigFileNotFoundError) {
-        throw new KubeConfigError(
-          `Failed to load kubeconfig from file: ${error.message}`,
+      await this.handleError(error);
+    }
+  }
+
+  /**
+   * Converts base64-encoded data to a PEM-formatted string.
+   * It first tries to decode the data as PEM. If that fails, it assumes the data is DER and converts it to PEM.
+   * @param base64Data - The base64-encoded string.
+   * @param type - The type of PEM (e.g., CERTIFICATE, PRIVATE KEY).
+   * @returns The PEM-formatted string.
+   * @throws {PemFormatError | PemConversionError} If conversion fails.
+   */
+  private convertBase64ToPem(base64Data: string, type: PemType): string {
+    try {
+      const decoded = Buffer.from(base64Data, 'base64').toString('utf-8');
+
+      if (PemUtils.isValidPem(decoded, type)) {
+        // The data is already in PEM format
+        return decoded;
+      } else {
+        // Assume the data is DER-encoded, convert it to PEM
+        const pem = PemUtils.bufferToPem(
+          Buffer.from(base64Data, 'base64'),
+          type,
         );
+        // Validate the newly created PEM
+        if (!PemUtils.isValidPem(pem, type)) {
+          throw new PemFormatError(
+            `Converted PEM is invalid for type: ${type}`,
+          );
+        }
+        return pem;
       }
-      this.handleError(error);
+    } catch (error) {
+      if (
+        error instanceof PemFormatError ||
+        error instanceof PemConversionError
+      ) {
+        throw error;
+      }
+      this.logger.error(
+        `Failed to convert base64 data to PEM for type ${type}`,
+        error,
+      );
+      throw new PemConversionError(
+        `Failed to convert base64 data to PEM for type: ${type}`,
+      );
     }
   }
 
   public async getInClusterConfig(): Promise<ResolvedKubeConfig> {
-    const tokenPath = '/var/run/secrets/kubernetes.io/serviceaccount/token';
-    const caPath = '/var/run/secrets/kubernetes.io/serviceaccount/ca.crt';
-    const namespacePath =
-      '/var/run/secrets/kubernetes.io/serviceaccount/namespace';
+    const inClusterPaths = {
+      token: '/var/run/secrets/kubernetes.io/serviceaccount/token',
+      ca: '/var/run/secrets/kubernetes.io/serviceaccount/ca.crt',
+      namespace: '/var/run/secrets/kubernetes.io/serviceaccount/namespace',
+    };
 
     try {
-      const serviceHost = process.env.KUBERNETES_SERVICE_HOST;
-      const servicePort = process.env.KUBERNETES_SERVICE_PORT;
+      this.ensureInClusterEnv();
 
-      if (!serviceHost || !servicePort) {
-        this.logger.error(
-          'Not running inside a Kubernetes cluster. Environment variables KUBERNETES_SERVICE_HOST or KUBERNETES_SERVICE_PORT are missing.',
-        );
-        throw new NotInClusterError('Not running inside a Kubernetes cluster.');
+      await this.validateInClusterFiles(inClusterPaths);
+
+      const [token, caBuffer] = await this.readInClusterFiles(inClusterPaths);
+
+      this.validateInClusterData(token, caBuffer);
+
+      // Convert CA certificate to PEM
+      const caPem = PemUtils.bufferToPem(caBuffer, PemType.CERTIFICATE);
+
+      // Optionally, validate the PEM
+      if (!PemUtils.isValidPem(caPem, PemType.CERTIFICATE)) {
+        throw new PemFormatError('In-cluster CA certificate is invalid.');
       }
 
-      const [tokenExists, caExists, namespaceExists] = await Promise.all([
-        this.fileExists(tokenPath),
-        this.fileExists(caPath),
-        this.fileExists(namespacePath),
-      ]);
-
-      if (!tokenExists) {
-        this.logger.error(`Missing service account token file at ${tokenPath}`);
-        throw new ConfigFileNotFoundError(
-          `Service account token is missing at path: ${tokenPath}`,
-        );
-      }
-      if (!caExists) {
-        this.logger.error(`Missing CA certificate file at ${caPath}`);
-        throw new ConfigFileNotFoundError(
-          `CA certificate is missing at path: ${caPath}`,
-        );
-      }
-      if (!namespaceExists) {
-        this.logger.warn(`Missing namespace file at ${namespacePath}`);
-      }
-
-      const [token, ca] = await Promise.all([
-        this.readFileSafely(tokenPath, 'utf8') as Promise<string>,
-        this.readFileSafely(caPath) as Promise<Buffer>,
-      ]);
-
-      // Validate token
-      if (!token.trim()) {
-        throw new InvalidConfigError(
-          'Service account token is missing or invalid.',
-        );
-      }
-
-      // Validate CA
-      if (!(ca instanceof Buffer) || ca.length === 0) {
-        throw new InvalidConfigError('CA certificate is missing or invalid.');
-      }
-
-      // Optionally, read and validate namespace
-      try {
-        const namespace = await this.readFileSafely(namespacePath, 'utf8');
-        if (!namespace || typeof namespace !== 'string') {
-          this.logger.warn('Namespace is missing or invalid.');
-        }
-      } catch {
-        this.logger.warn('Failed to read namespace file.');
-      }
-
-      const server = `https://${serviceHost}:${servicePort}`;
+      const server = this.constructServerUrl();
 
       return {
         cluster: {
           server,
-          certificateAuthorityData: ca.toString('base64'),
+          certificateAuthorityData: caBuffer.toString('base64'),
+          certificateAuthorityPem: caPem,
         },
         user: {
           token: token.trim(),
         },
       };
     } catch (error: any) {
-      this.handleError(error);
-      throw error;
+      await this.handleError(error);
     }
   }
 
@@ -154,53 +196,47 @@ export class KubeConfigReader {
     return this.yamlParser.parse(fileContent);
   }
 
-  private getContext(config: any, contextName: string): any {
-    return this.extractConfigSection(
+  private validateConfig(config: any): void {
+    if (!config || typeof config !== 'object') {
+      throw new InvalidConfigError('Parsed kubeconfig is invalid.');
+    }
+
+    if (!config.currentContext) {
+      throw new InvalidConfigError('No currentContext is set in kubeconfig.');
+    }
+  }
+
+  private extractConfigDetails(config: any): { cluster: any; user: any } {
+    const currentContextName: string = config.currentContext;
+    const context = this.getConfigSection(
       config,
       'contexts',
-      contextName,
-      `Context '${contextName}' not found in kubeconfig.`,
+      currentContextName,
     );
+    const cluster = this.getConfigSection(config, 'clusters', context.cluster);
+    const user = this.getConfigSection(config, 'users', context.user);
+    return { cluster, user };
   }
 
-  private getCluster(config: any, clusterName: string): any {
-    return this.extractConfigSection(
-      config,
-      'clusters',
-      clusterName,
-      `Cluster '${clusterName}' not found in kubeconfig.`,
-    );
+  private getConfigSection(config: any, section: string, name: string): any {
+    const entry = config[section].find((item: any) => item.name === name);
+    if (!entry) {
+      const errorMessage = `${section.slice(0, -1)} '${name}' not found in kubeconfig.`;
+      throw new ConfigFileNotFoundError(errorMessage);
+    }
+    return entry[section.slice(0, -1)];
   }
 
-  private getUser(config: any, userName: string): any {
-    return this.extractConfigSection(
-      config,
-      'users',
-      userName,
-      `User '${userName}' not found in kubeconfig.`,
-    );
-  }
-
-  private processUserPemData(user: any): void {
-    user.clientCertificateData = this.processPemData(
-      user.clientCertificateData,
-      'CERTIFICATE',
-      'clientCertificateData',
-    );
-
-    user.clientKeyData = this.processPemData(
-      user.clientKeyData,
-      'PRIVATE KEY',
-      'clientKeyData',
-    );
-  }
-
-  private processClusterPemData(cluster: any): void {
-    cluster.certificateAuthorityData = this.processPemData(
-      cluster.certificateAuthorityData,
-      'CERTIFICATE',
-      'certificateAuthorityData',
-    );
+  /**
+   * Validates the presence and format of base64-encoded data.
+   * @param data - The base64-encoded string.
+   * @param fieldName - The name of the field being validated.
+   * @throws {InvalidConfigError} If the data is invalid.
+   */
+  private validateData(data: string | undefined, fieldName: string): void {
+    if (data && !PemUtils.isValidBase64(data)) {
+      throw new InvalidConfigError(`Invalid base64 format for ${fieldName}.`);
+    }
   }
 
   private mapKeys(obj: any): any {
@@ -209,7 +245,9 @@ export class KubeConfigReader {
     } else if (obj !== null && typeof obj === 'object') {
       const mapped: any = {};
       for (const key of Object.keys(obj)) {
-        const newKey = key.replace(/-([a-z])/g, (g) => g[1].toUpperCase());
+        const newKey = key.replace(/-([a-z])/g, (_, char) =>
+          char.toUpperCase(),
+        );
         mapped[newKey] = this.mapKeys(obj[key]);
       }
       return mapped;
@@ -218,37 +256,85 @@ export class KubeConfigReader {
     }
   }
 
-  private validateAndConvertPem(data: string, type: string): Buffer {
-    if (!PemUtils.isValidPem(data, type)) {
-      throw new InvalidConfigError(`Invalid PEM format for ${type}.`);
+  private async validateInClusterFiles(paths: {
+    token: string;
+    ca: string;
+    namespace: string;
+  }): Promise<void> {
+    const { token, ca } = paths;
+    const [tokenExists, caExists] = await Promise.all([
+      this.fileExists(token),
+      this.fileExists(ca),
+    ]);
+
+    const missingFiles: string[] = [];
+
+    if (!tokenExists) {
+      this.logger.error(`Missing service account token file at ${token}`);
+      missingFiles.push(`Service account token is missing at path: ${token}`);
     }
-    return PemUtils.pemToBuffer(data, type);
+
+    if (!caExists) {
+      this.logger.error(`Missing CA certificate file at ${ca}`);
+      missingFiles.push(`CA certificate is missing at path: ${ca}`);
+    }
+
+    if (missingFiles.length > 0) {
+      throw new ConfigFileNotFoundError(missingFiles.join('; '));
+    }
+
+    // Namespace is optional
+    const namespaceExists = await this.fileExists(paths.namespace);
+    if (!namespaceExists) {
+      this.logger.warn(`Namespace is missing or invalid: ${paths.namespace}`);
+    }
   }
 
-  private processPemData(
-    data: string | undefined,
-    type: string,
-    fieldName: string,
-  ): string | undefined {
-    if (data) {
-      const buffer = this.validateAndConvertPem(data, type);
-      return buffer.toString('base64'); // Apply consistent base64 encoding
+  private async readInClusterFiles(paths: {
+    token: string;
+    ca: string;
+  }): Promise<[string, Buffer]> {
+    try {
+      const [token, ca] = await Promise.all([
+        this.fileSystem.readFile(paths.token, 'utf8'),
+        this.fileSystem.readFile(paths.ca),
+      ]);
+      return [token, ca];
+    } catch (error: any) {
+      throw new ConfigFileNotFoundError(
+        `Failed to read in-cluster files: ${error.message}`,
+      );
     }
-    return undefined;
   }
 
-  private extractConfigSection(
-    config: any,
-    section: string,
-    name: string,
-    errorMessage: string,
-  ): any {
-    const entry = config[section].find((item: any) => item.name === name);
-    if (!entry) {
-      this.logger.error(errorMessage); // Log the specific error message here
-      throw new ConfigFileNotFoundError(errorMessage);
+  private validateInClusterData(token: string, ca: Buffer): void {
+    if (!token.trim()) {
+      throw new InvalidConfigError(
+        'Service account token is missing or invalid.',
+      );
     }
-    return entry[section.slice(0, -1)];
+
+    if (!(ca instanceof Buffer) || ca.length === 0) {
+      throw new InvalidConfigError('CA certificate is missing or invalid.');
+    }
+  }
+
+  private constructServerUrl(): string {
+    const serviceHost = process.env.KUBERNETES_SERVICE_HOST!;
+    const servicePort = process.env.KUBERNETES_SERVICE_PORT!;
+    return `https://${serviceHost}:${servicePort}`;
+  }
+
+  private ensureInClusterEnv(): void {
+    const serviceHost = process.env.KUBERNETES_SERVICE_HOST;
+    const servicePort = process.env.KUBERNETES_SERVICE_PORT;
+
+    if (!serviceHost || !servicePort) {
+      this.logger.error(
+        'Not running inside a Kubernetes cluster. Environment variables KUBERNETES_SERVICE_HOST or KUBERNETES_SERVICE_PORT are missing.',
+      );
+      throw new NotInClusterError('Not running inside a Kubernetes cluster.');
+    }
   }
 
   private async fileExists(filePath: string): Promise<boolean> {
@@ -260,62 +346,79 @@ export class KubeConfigReader {
     }
   }
 
-  private async readFileSafely(
-    filePath: string,
-    encoding?: BufferEncoding,
-  ): Promise<string | Buffer> {
-    try {
-      return await this.fileSystem.readFile(filePath, encoding);
-    } catch (error: any) {
-      throw new ConfigFileNotFoundError(
-        `Failed to read file at ${filePath}: ${error.message}`,
-      );
-    }
+  private async getExecToken(execConfig: any): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const { command, args = [], env = {} } = execConfig;
+      const child = spawn(command, args, { env: { ...process.env, ...env } });
+
+      let stdout = '';
+      let stderr = '';
+
+      child.stdout.on('data', (data) => {
+        stdout += data.toString();
+      });
+
+      child.stderr.on('data', (data) => {
+        stderr += data.toString();
+      });
+
+      child.on('close', (code) => {
+        if (code !== 0) {
+          reject(
+            new ExecAuthError(
+              `Exec command failed with code ${code}: ${stderr}`,
+            ),
+          );
+        } else {
+          try {
+            const execOutput = JSON.parse(stdout);
+            if (execOutput.token) {
+              resolve(execOutput.token);
+            } else {
+              reject(new ExecAuthError('Exec command did not return a token.'));
+            }
+          } catch (parseError) {
+            reject(
+              new ExecAuthError(
+                `Failed to parse exec command output: ${parseError.message}`,
+              ),
+            );
+          }
+        }
+      });
+
+      child.on('error', (err) => {
+        reject(new ExecAuthError(`Failed to execute command: ${err.message}`));
+      });
+    });
   }
 
-  private async isInCluster(): Promise<boolean> {
-    const tokenPath = '/var/run/secrets/kubernetes.io/serviceaccount/token';
-    const caPath = '/var/run/secrets/kubernetes.io/serviceaccount/ca.crt';
-    const namespacePath =
-      '/var/run/secrets/kubernetes.io/serviceaccount/namespace';
-
-    const [tokenExists, caExists, namespaceExists] = await Promise.all([
-      this.fileExists(tokenPath),
-      this.fileExists(caPath),
-      this.fileExists(namespacePath),
-    ]);
-
-    if (!tokenExists)
-      this.logger.error(`Missing service account token file at ${tokenPath}`);
-    if (!caExists)
-      this.logger.error(`Missing CA certificate file at ${caPath}`);
-    if (!namespaceExists)
-      this.logger.warn(`Missing namespace file at ${namespacePath}`); // Namespace is optional
-
-    const serviceHost = process.env.KUBERNETES_SERVICE_HOST;
-    const servicePort = process.env.KUBERNETES_SERVICE_PORT;
-
-    return tokenExists && caExists && !!serviceHost && !!servicePort;
-  }
-
-  private handleError(error: any): never | null {
+  private async handleError(error: any): Promise<never> {
     if (error instanceof KubeConfigError) {
-      this.logAndThrowError(error);
-    } else if (error instanceof SyntaxError) {
-      this.logAndThrowError(
-        new ParsingError('Failed to parse kubeconfig YAML.', error.message),
-      );
-    } else if (error.code === 'ENOENT') {
-      this.logAndThrowError(new ConfigFileNotFoundError(this.kubeConfigPath));
-    } else {
-      this.logger.error(`Unexpected error: ${error.message}`, error);
-      throw new KubeConfigError(`Failed to read kubeconfig: ${error.message}`);
+      this.logError(error);
+      throw error;
     }
-    return null; // Unreachable
+
+    if (error instanceof SyntaxError) {
+      const parsingError = new ParsingError(
+        'Failed to parse kubeconfig YAML.',
+        error.message,
+      );
+      this.logError(parsingError);
+      throw parsingError;
+    }
+
+    if (error.code === 'ENOENT') {
+      const notFoundError = new ConfigFileNotFoundError(this.kubeConfigPath);
+      this.logError(notFoundError);
+      throw notFoundError;
+    }
+
+    this.logger.error(`Unexpected error: ${error.message}`, error);
+    throw new KubeConfigError(`Failed to read kubeconfig: ${error.message}`);
   }
 
-  private logAndThrowError(error: KubeConfigError): never {
+  private logError(error: KubeConfigError): void {
     this.logger.error(error.message, error);
-    throw error;
   }
 }
