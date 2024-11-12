@@ -597,7 +597,8 @@ export class KubernetesClient implements IKubernetesClient {
    * @param labelSelector Optional label selector.
    * @param fieldSelector Optional field selector.
    * @returns Async generator yielding watch events.
-   * @throws {ClientError} if the resource cannot be watched.
+   * @throws {ParsingError} if JSON parsing fails.
+   * @throws {NetworkError} if a network error occurs.
    * @example Watch for changes to pods in the 'default' namespace:
    * ```typescript
    * for await (const event of client.watchResource('v1', 'Pod', 'default')) {
@@ -627,7 +628,8 @@ export class KubernetesClient implements IKubernetesClient {
 
     const options = await this.getRequestOptions('GET', path);
 
-    const logger = this.logger;
+    let hasError = false; // Flag to track if an error has occurred
+
     const stream = new Readable({
       read() {
         const req = request(options, (res) => {
@@ -636,26 +638,42 @@ export class KubernetesClient implements IKubernetesClient {
         });
 
         req.on('error', (err) => {
-          logger.error(
-            `Error occurred while watching resource: ${err.message}`,
-          );
-          this.destroy(new NetworkError('Error in watch stream.', err));
+          if (!hasError) {
+            // Only emit NetworkError if no previous error
+            console.error(
+              `Error occurred while watching resource: ${err.message}`,
+            );
+            this.destroy(new NetworkError('Error in watch stream.', err));
+          }
         });
         req.end();
       },
     });
 
-    for await (const chunk of stream) {
-      const data = chunk.toString();
-      for (const line of data.split('\n')) {
-        if (line.trim()) {
-          try {
-            yield JSON.parse(line) as WatchEvent<T>;
-          } catch (e) {
-            this.logger.error(`Failed to parse watch event JSON: ${e.message}`);
-            throw new Error('Failed to parse watch event JSON');
+    try {
+      for await (const chunk of stream) {
+        const data = chunk.toString();
+        for (const line of data.split('\n')) {
+          if (line.trim()) {
+            try {
+              yield JSON.parse(line) as WatchEvent<T>;
+            } catch (e: any) {
+              this.logger.error(
+                `Failed to parse watch event JSON: ${e.message}`,
+              );
+              hasError = true; // Set the flag to prevent NetworkError emission
+              throw new ParsingError('Failed to parse watch event JSON.', data);
+            }
           }
         }
+      }
+    } catch (e) {
+      if (e instanceof ParsingError) {
+        // Gracefully destroy the stream without emitting NetworkError
+        stream.destroy();
+        throw e;
+      } else {
+        throw e; // Re-throw other errors
       }
     }
   }

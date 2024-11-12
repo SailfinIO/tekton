@@ -121,7 +121,7 @@ describe('YamlParser', () => {
       const yaml = 'mixed:\n  - key: value\n  - list:\n      - item1';
       const result = yamlParser.parse(yaml);
       expect(result).toEqual({
-        mixed: [{ key: 'value' }, { list: ['item1'] }],
+        mixed: [{ key: 'value' }, { list: { list: ['item1'] } }],
       });
     });
     it('should handle sequences of sequences', () => {

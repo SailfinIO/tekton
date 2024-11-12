@@ -10,3 +10,4 @@ export * from './ClientOptions';
 export * from './IFileSystem';
 export * from './TokenizedLine';
 export * from './IYamlParser';
+export * from './IKubeConfigReader';

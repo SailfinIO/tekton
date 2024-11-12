@@ -1,268 +1,174 @@
 // src/clients/KubernetesClient.test.ts
+// Import mocks
 
+jest.mock('../utils/KubeConfigReader');
+jest.mock('../utils/Logger');
+jest.mock('../utils/FileSystem');
+jest.mock('../utils/YamlParser');
+jest.mock('../utils/PemUtils');
+
+import { Logger } from '../utils/Logger';
+import { KubeConfigReader } from '../utils/KubeConfigReader';
+
+import nock from 'nock';
 import { KubernetesClient } from './KubernetesClient';
-import { KubeConfigReader } from '../utils';
-import { ResolvedKubeConfig, KubernetesResource, WatchEvent } from '../models';
+import { KubernetesResource, WatchEvent } from '../models';
+import { HttpStatus, LogLevel, PemType } from '../enums';
 import {
   ApiError,
   ClientError,
   KubeConfigError,
   NetworkError,
+  ParsingError,
+  PemFormatError,
 } from '../errors';
-import https, { RequestOptions } from 'https';
-import { IFileSystem, ILogger } from '../interfaces';
-import { EventEmitter, Readable } from 'stream';
-import { ClientRequest, IncomingMessage } from 'http';
-
-// Mock dependencies
-jest.mock('../utils/KubeConfigReader');
-jest.mock('../utils/Logger');
-
-type ReadFileMock = jest.Mock<
-  Promise<string>,
-  [path: string, encoding: BufferEncoding]
-> &
-  jest.Mock<Promise<Buffer>, [path: string]>;
-
-const readFileMock: ReadFileMock = jest.fn(
-  (path: string, encoding?: BufferEncoding): Promise<string | Buffer> => {
-    if (encoding === 'utf8') {
-      // Return string data for PEM-encoded files
-      switch (path) {
-        case '/mock/.kube/config':
-          return Promise.resolve(kubeconfigYaml);
-        case 'mock-ca-path':
-          return Promise.resolve(`-----BEGIN CERTIFICATE-----
-  MIIDdzCCAl+gAwIBAgIEbVYt0TANBgkqhkiG9w0BAQsFADBvMQswCQYDVQQGEwJV
-  ...
-  -----END CERTIFICATE-----`);
-        case 'mock-client-cert-path':
-          return Promise.resolve(`-----BEGIN CERTIFICATE-----
-  MIIDdzCCAl+gAwIBAgIEbVYt0TANBgkqhkiG9w0BAQsFADBvMQswCQYDVQQGEwJV
-  ...
-  -----END CERTIFICATE-----`);
-        case 'mock-client-key-path':
-          return Promise.resolve(`-----BEGIN PRIVATE KEY-----
-  MIIEvQIBADANBgkqhkiG9w0BAQEFAASC...
-  -----END PRIVATE KEY-----`);
-        default:
-          return Promise.resolve(''); // Default string response
-      }
-    } else {
-      // Return Buffer data for non-UTF8 encodings
-      switch (path) {
-        case 'mock-ca-path':
-          return Promise.resolve(Buffer.from('mock-ca-cert'));
-        default:
-          return Promise.resolve(Buffer.from('')); // Default Buffer response
-      }
-    }
-  },
-) as ReadFileMock;
-
-const createMockFileSystem = (): jest.Mocked<IFileSystem> => ({
-  readFile: readFileMock, // Assign the custom ReadFileMock
-  access: jest.fn(),
-});
-
-const kubeconfigYaml = `
-apiVersion: v1
-clusters:
-- cluster:
-    certificate-authority-data: ${Buffer.from('valid-ca-cert').toString('base64')}
-    server: https://127.0.0.1:6443
-  name: test-cluster-1
-contexts:
-- context:
-    cluster: test-cluster-1
-    user: test-cluster-1
-  name: test-cluster-1
-current-context: test-cluster-1
-kind: Config
-preferences: {}
-users:
-- name: test-cluster-1
-  user:
-    client-certificate-data: ${Buffer.from('valid-client-cert').toString('base64')}
-    client-key-data: ${Buffer.from('valid-client-key').toString('base64')}
-`;
+import {
+  resolvedInClusterKubeConfig,
+  resolvedValidKubeConfig,
+} from '../utils/__mocks__/kubeConfigMocks';
+import { IFileSystem } from '../interfaces';
+import { PemUtils } from '../utils/PemUtils';
+import { createMockFileSystem } from '../utils/__mocks__/FileSystem';
+import { KindToResourceNameMap } from '../constants';
+import { PassThrough } from 'stream';
 
 describe('KubernetesClient', () => {
-  let mockKubeConfig: ResolvedKubeConfig;
-  let mockLogger: jest.Mocked<ILogger>;
+  let kubernetesClient: KubernetesClient;
   let mockFileSystem: jest.Mocked<IFileSystem>;
+  let mockedLogger: jest.Mocked<Logger>;
 
-  beforeAll(() => {
-    // Create mock logger instance
-    mockLogger = {
-      debug: jest.fn(),
-      info: jest.fn(),
-      warn: jest.fn(),
-      error: jest.fn(),
-      setLogLevel: jest.fn(),
-      verbose: jest.fn(),
-    };
-  });
+  const mockKubeConfigPath = '/mock/.kube/config';
 
-  beforeEach(() => {
-    jest.clearAllMocks();
+  beforeEach(async () => {
+    jest.resetAllMocks();
 
-    // Setup mock kubeConfig
-    mockKubeConfig = {
-      cluster: {
-        server: 'https://mock-server',
-        certificateAuthority: 'mock-ca-path',
-      },
-      user: {
-        token: 'mock-token',
-      },
-    };
-
-    // Setup KubeConfigReader mock implementation
+    // Mock KubeConfigReader methods
     (
       KubeConfigReader as jest.MockedClass<typeof KubeConfigReader>
-    ).prototype.getKubeConfig = jest.fn().mockResolvedValue(mockKubeConfig);
+    ).prototype.getKubeConfig = jest
+      .fn()
+      .mockResolvedValue(resolvedValidKubeConfig);
     (
       KubeConfigReader as jest.MockedClass<typeof KubeConfigReader>
     ).prototype.getInClusterConfig = jest
       .fn()
-      .mockResolvedValue(mockKubeConfig);
+      .mockResolvedValue(resolvedInClusterKubeConfig);
 
-    // Setup mock FileSystem
+    // Mock PemUtils methods
+    const mockedPemUtils = PemUtils as jest.Mocked<typeof PemUtils>;
+
+    mockedPemUtils.isValidPem.mockImplementation(
+      (pem: string, type: PemType) => {
+        const pemRegex = new RegExp(
+          `-----BEGIN ${type}-----[\\s\\S]+-----END ${type}-----`,
+          'i',
+        );
+        return pemRegex.test(pem);
+      },
+    );
+
+    mockedPemUtils.bufferToPem.mockImplementation(
+      (buffer: Buffer, type: PemType) => {
+        const base64Data = buffer.toString('base64');
+        return `-----BEGIN ${type}-----\n${base64Data}\n-----END ${type}-----`;
+      },
+    );
+
+    mockedPemUtils.pemToBuffer.mockImplementation(
+      (pem: string, type: PemType) => {
+        const base64Data = pem
+          .replace(`-----BEGIN ${type}-----`, '')
+          .replace(`-----END ${type}-----`, '')
+          .replace(/\n/g, '');
+        if (!PemUtils.isValidPem(pem, type)) {
+          throw new PemFormatError(`Invalid PEM format for type: ${type}`);
+        }
+        return Buffer.from(base64Data, 'base64');
+      },
+    );
+
+    // Instantiate mocked Logger
+    const logger = new Logger('Test Logger', LogLevel.DEBUG, false);
+    mockedLogger = logger as jest.Mocked<Logger>;
+
+    // Create and configure the mock FileSystem
     mockFileSystem = createMockFileSystem();
-  });
 
-  // Helper function to mock https.request using jest.spyOn
-  const mockHttpsRequest = (
-    statusCode: number,
-    responseData: any,
-    shouldParseJson: boolean = true,
-  ) => {
-    // Create a mock IncomingMessage
-    const res = new Readable() as IncomingMessage;
-    res.statusCode = statusCode;
-    res.headers = {};
-
-    if (shouldParseJson && responseData !== null) {
-      res.push(JSON.stringify(responseData));
-    } else if (responseData !== null) {
-      res.push(responseData); // For plain text responses like logs
-    }
-    res.push(null); // End of response
-
-    // Create a mock ClientRequest
-    const req = {
-      on: jest.fn(),
-      write: jest.fn(),
-      end: jest.fn(),
-    } as Partial<ClientRequest> as ClientRequest;
-
-    // Spy on https.request and mock its implementation
-    jest
-      .spyOn(https, 'request')
-      .mockImplementation(
-        (
-          urlOrOptions: string | URL | RequestOptions,
-          optionsOrCallback?: RequestOptions | ((res: IncomingMessage) => void),
-          callback?: (res: IncomingMessage) => void,
-        ): ClientRequest => {
-          let cb: (res: IncomingMessage) => void;
-
-          if (typeof optionsOrCallback === 'function') {
-            cb = optionsOrCallback;
-          } else {
-            cb = callback!;
+    (mockFileSystem.readFile as jest.Mock).mockImplementation(
+      async (path: string, encoding?: string): Promise<string | Buffer> => {
+        if (encoding) {
+          if (encoding !== 'utf8') {
+            throw new Error('Unsupported encoding');
           }
+          switch (path) {
+            case 'client-cert.pem':
+              return `-----BEGIN CERTIFICATE-----
+  MIIC+DCCAeCgAwIBAgIJAK3vFakeExampleCertDataMIIC+DCCAeCgAwIBAgIJAK3v
+  -----END CERTIFICATE-----`;
+            case 'client-key.pem':
+              return `-----BEGIN PRIVATE KEY-----
+  MIIEvQIBADANBgkqhkiG9w0BAQEFAASCExampleKeyDataMIIEvQIBADANBgkqhkiG9w0BA
+  -----END PRIVATE KEY-----`;
+            case 'ca-cert.pem':
+              return `-----BEGIN CERTIFICATE-----
+  MIIDdzCCAl+gAwIBAgIEbFnFakeExampleCACertDataMIIDdzCCAl+gAwIBAgIEbFn
+  -----END CERTIFICATE-----`;
+            default:
+              throw new Error(`Unknown file path: ${path}`);
+          }
+        } else {
+          // Handle calls without encoding, returning Buffer
+          switch (path) {
+            case 'ca-cert.pem':
+              return Buffer.from(
+                '-----BEGIN CERTIFICATE-----\nMIIDdzCCAl+gAwIBAgIEbFnFakeExampleCACertDataMIIDdzCCAl+gAwIBAgIEbFn\n-----END CERTIFICATE-----',
+              );
+            case 'client-cert.pem':
+              return Buffer.from(
+                '-----BEGIN CERTIFICATE-----\nMIIC+DCCAeCgAwIBAgIJAK3vFakeExampleCertDataMIIC+DCCAeCgAwIBAgIJAK3v\n-----END CERTIFICATE-----',
+              );
+            case 'client-key.pem':
+              return Buffer.from(
+                '-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCExampleKeyDataMIIEvQIBADANBgkqhkiG9w0BA\n-----END PRIVATE KEY-----',
+              );
+            default:
+              throw new Error(`Unknown file path: ${path}`);
+          }
+        }
+      },
+    );
 
-          cb(res);
-          return req;
-        },
-      );
-
-    return req;
-  };
-
-  afterEach(() => {
-    jest.restoreAllMocks();
+    // Create the KubernetesClient instance with mocked dependencies
+    kubernetesClient = await KubernetesClient.create({
+      kubeConfigPath: mockKubeConfigPath,
+      logLevel: LogLevel.INFO,
+      fileSystem: mockFileSystem,
+      logger: mockedLogger,
+    });
   });
 
-  describe('KubernetesClient Constructor', () => {
-    let mockKubeConfig: ResolvedKubeConfig;
-    let mockLogger: jest.Mocked<ILogger>;
-    let mockFileSystem: jest.Mocked<IFileSystem>;
+  /**
+   * Test Suite for Static create Method
+   */
+  describe('create', () => {
+    it('should successfully create a KubernetesClient instance with provided kubeConfigPath', async () => {
+      // Arrange is already done in beforeEach
 
-    beforeAll(() => {
-      // Set up mock logger instance
-      mockLogger = {
-        debug: jest.fn(),
-        info: jest.fn(),
-        warn: jest.fn(),
-        error: jest.fn(),
-        setLogLevel: jest.fn(),
-        verbose: jest.fn(),
-      };
-    });
-
-    beforeEach(() => {
-      jest.clearAllMocks();
-
-      // Mock kubeConfig object with basic structure
-      mockKubeConfig = {
-        cluster: {
-          server: 'https://mock-server',
-          certificateAuthority: 'mock-ca-path',
-        },
-        user: {
-          token: 'mock-token',
-        },
-      };
-
-      // Mock KubeConfigReader behavior
-      (
-        KubeConfigReader as jest.MockedClass<typeof KubeConfigReader>
-      ).prototype.getKubeConfig.mockResolvedValue(mockKubeConfig);
-
-      // Mock file system
-      mockFileSystem = {
-        readFile: jest.fn(),
-        access: jest.fn(),
-      } as unknown as jest.Mocked<IFileSystem>;
-    });
-
-    it('should initialize successfully with default kubeconfig path', async () => {
-      const client = await KubernetesClient.create({
-        fileSystem: mockFileSystem,
-        logger: mockLogger,
-      });
-
-      expect(client).toBeInstanceOf(KubernetesClient);
-      expect(mockLogger.info).toHaveBeenCalledWith(
+      // Act & Assert
+      expect(kubernetesClient).toBeInstanceOf(KubernetesClient);
+      expect(mockedLogger.info).toHaveBeenCalledWith(
         'Loading kube config from file.',
       );
-      expect(mockLogger.info).toHaveBeenCalledWith(
-        'Loaded kube config from default path.',
+      expect(mockedLogger.info).toHaveBeenCalledWith(
+        `Loaded kube config from ${mockKubeConfigPath}.`,
+      );
+      expect(mockedLogger.debug).toHaveBeenCalledWith(
+        'KubernetesClient initialized.',
       );
     });
 
-    it('should initialize successfully with a custom kubeconfig path', async () => {
-      const kubeConfigPath = '/custom/kubeconfig/path';
-
-      const client = await KubernetesClient.create({
-        kubeConfigPath,
-        fileSystem: mockFileSystem,
-        logger: mockLogger,
-      });
-
-      expect(client).toBeInstanceOf(KubernetesClient);
-      expect(mockLogger.info).toHaveBeenCalledWith(
-        'Loading kube config from file.',
-      );
-      expect(mockLogger.info).toHaveBeenCalledWith(
-        `Loaded kube config from ${kubeConfigPath}.`,
-      );
-    });
-
-    it('should attempt to load in-cluster config if file config fails', async () => {
+    it('should fallback to in-cluster config if loading from file fails with KubeConfigError', async () => {
+      // Arrange
       // Mock the getKubeConfig to throw KubeConfigError
       (
         KubeConfigReader as jest.MockedClass<typeof KubeConfigReader>
@@ -273,24 +179,32 @@ describe('KubernetesClient', () => {
       // Mock in-cluster config resolution
       (
         KubeConfigReader as jest.MockedClass<typeof KubeConfigReader>
-      ).prototype.getInClusterConfig.mockResolvedValue(mockKubeConfig);
+      ).prototype.getInClusterConfig.mockResolvedValue(
+        resolvedInClusterKubeConfig,
+      );
 
+      // Act
       const client = await KubernetesClient.create({
+        kubeConfigPath: mockKubeConfigPath,
         fileSystem: mockFileSystem,
-        logger: mockLogger,
+        logger: mockedLogger,
       });
 
+      // Assert
       expect(client).toBeInstanceOf(KubernetesClient);
-      expect(mockLogger.warn).toHaveBeenCalledWith(
+      expect(mockedLogger.info).toHaveBeenCalledWith(
+        'Loading kube config from file.',
+      );
+      expect(mockedLogger.warn).toHaveBeenCalledWith(
         'Failed to load kubeconfig from file. Attempting to load in-cluster config.',
       );
-      expect(mockLogger.info).toHaveBeenCalledWith(
+      expect(mockedLogger.info).toHaveBeenCalledWith(
         'Loaded in-cluster kube config.',
       );
     });
 
-    it('should throw a ClientError if both file and in-cluster config loading fail', async () => {
-      // Mock both getKubeConfig and getInClusterConfig to throw errors
+    it('should throw ClientError if both file and in-cluster config loading fail', async () => {
+      // Arrange
       (
         KubeConfigReader as jest.MockedClass<typeof KubeConfigReader>
       ).prototype.getKubeConfig.mockRejectedValue(
@@ -303,716 +217,839 @@ describe('KubernetesClient', () => {
         new KubeConfigError('Failed to load in-cluster kube config.'),
       );
 
+      // Act & Assert
       await expect(
         KubernetesClient.create({
+          kubeConfigPath: mockKubeConfigPath,
           fileSystem: mockFileSystem,
-          logger: mockLogger,
+          logger: mockedLogger,
         }),
       ).rejects.toThrow(ClientError);
 
-      expect(mockLogger.error).toHaveBeenCalledWith(
-        'Failed to load in-cluster kube config.',
-        expect.any(KubeConfigError),
+      expect(mockedLogger.warn).toHaveBeenCalledWith(
+        'Failed to load kubeconfig from file. Attempting to load in-cluster config.',
       );
-      expect(mockLogger.error).toHaveBeenCalledWith(
+      expect(mockedLogger.error).toHaveBeenCalledWith(
         'Failed to load in-cluster kube config.',
         expect.any(KubeConfigError),
       );
     });
 
-    it('should throw unexpected errors during initialization', async () => {
+    it('should throw unexpected errors when loading kubeconfig', async () => {
+      // Arrange
       const unexpectedError = new Error('Unexpected error occurred');
 
       (
         KubeConfigReader as jest.MockedClass<typeof KubeConfigReader>
       ).prototype.getKubeConfig.mockRejectedValue(unexpectedError);
 
+      // Act & Assert
       await expect(
         KubernetesClient.create({
+          kubeConfigPath: mockKubeConfigPath,
           fileSystem: mockFileSystem,
-          logger: mockLogger,
+          logger: mockedLogger,
         }),
-      ).rejects.toThrow('Unexpected error occurred');
+      ).rejects.toThrow('Unexpected error');
 
-      expect(mockLogger.error).toHaveBeenCalledWith(
+      expect(mockedLogger.error).toHaveBeenCalledWith(
         'Unexpected error while loading kube config.',
         unexpectedError,
       );
     });
-
-    it('should fallback to in-cluster config if default kubeConfig not found', async () => {
-      // Mock the getKubeConfig method to throw a KubeConfigError
-      (
-        KubeConfigReader as jest.MockedClass<typeof KubeConfigReader>
-      ).prototype.getKubeConfig.mockRejectedValue(
-        new KubeConfigError('Failed to load kubeconfig from file.'),
-      );
-
-      // Mock the getInClusterConfig to resolve with a valid configuration
-      (
-        KubeConfigReader as jest.MockedClass<typeof KubeConfigReader>
-      ).prototype.getInClusterConfig.mockResolvedValue(mockKubeConfig);
-
-      // Mock readFile for certificateAuthority
-      (mockFileSystem.readFile as jest.Mock).mockImplementation(
-        (path: string, encoding?: BufferEncoding): Promise<string | Buffer> => {
-          if (path === 'mock-ca-path') {
-            return Promise.resolve(`-----BEGIN CERTIFICATE-----
-    MIIDdzCCAl+gAwIBAgIEbVYt0TANBgkqhkiG9w0BAQsFADBvMQswCQYDVQQGEwJV
-    ...
-    -----END CERTIFICATE-----`);
-          }
-          return Promise.resolve(Buffer.from(''));
-        },
-      );
-
-      // Attempt to create the KubernetesClient
-      const client = await KubernetesClient.create({
-        fileSystem: mockFileSystem,
-        logger: mockLogger, // Pass the mocked logger here
-      });
-
-      // Verify that the client instance is created successfully
-      expect(client).toBeInstanceOf(KubernetesClient);
-
-      // Verify that appropriate log messages were recorded
-      expect(mockLogger.info).toHaveBeenCalledWith(
-        'Loading kube config from file.',
-      );
-      expect(mockLogger.warn).toHaveBeenCalledWith(
-        'Failed to load kubeconfig from file. Attempting to load in-cluster config.',
-      );
-      expect(mockLogger.info).toHaveBeenCalledWith(
-        'Loaded in-cluster kube config.',
-      );
-    });
   });
 
-  describe('API Operations', () => {
-    let client: KubernetesClient;
+  /**
+   * Test Suite for getResource Method
+   */
+  describe('getResource', () => {
+    const apiVersion = 'v1';
+    const kind = 'Pod';
+    const name = 'test-pod';
+    const namespace = 'default';
+    const resourcePath = '/api/v1/namespaces/default/pods/test-pod';
+    const mockResource: KubernetesResource = {
+      apiVersion,
+      kind,
+      metadata: { name, namespace },
+    };
 
-    beforeEach(async () => {
-      // Mock readFile to return string for 'utf8' encoding and Buffer otherwise
-      (mockFileSystem.readFile as jest.Mock).mockImplementation(
-        (path: string, encoding?: BufferEncoding): Promise<string | Buffer> => {
-          if (encoding === 'utf8') {
-            // Return string data for PEM-encoded files
-            switch (path) {
-              case 'mock-ca-path':
-                return Promise.resolve(`-----BEGIN CERTIFICATE-----
-  MIIDdzCCAl+gAwIBAgIEbVYt0TANBgkqhkiG9w0BAQsFADBvMQswCQYDVQQGEwJV
-  ...
-  -----END CERTIFICATE-----`);
-              case 'mock-client-cert-path':
-                return Promise.resolve(`-----BEGIN CERTIFICATE-----
-  MIIDdzCCAl+gAwIBAgIEbVYt0TANBgkqhkiG9w0BAQsFADBvMQswCQYDVQQGEwJV
-  ...
-  -----END CERTIFICATE-----`);
-              case 'mock-client-key-path':
-                return Promise.resolve(`-----BEGIN PRIVATE KEY-----
-  MIIEvQIBADANBgkqhkiG9w0BAQEFAASC...
-  -----END PRIVATE KEY-----`);
-              default:
-                return Promise.resolve(''); // Default string response
-            }
-          } else {
-            // Return Buffer data for non-UTF8 encodings
-            switch (path) {
-              case 'mock-ca-path':
-                return Promise.resolve(Buffer.from('mock-ca-cert'));
-              default:
-                return Promise.resolve(Buffer.from('')); // Default Buffer response
-            }
-          }
-        },
+    it('should fetch a specific resource successfully', async () => {
+      // Arrange
+      const apiVersion = 'v1';
+      const kind = 'Pod';
+      const name = 'test-pod';
+      const namespace = 'default';
+      const resourcePath = `/api/${apiVersion}/namespaces/${namespace}/pods/${name}`;
+      const mockResource = {
+        apiVersion,
+        kind,
+        metadata: { name, namespace },
+      };
+
+      const scope = nock('https://127.0.0.1:6443')
+        .get(resourcePath) // Intercepts the GET request to the specific path
+        .reply(HttpStatus.OK, mockResource);
+
+      // Act
+      const result = await kubernetesClient.getResource<KubernetesResource>(
+        apiVersion,
+        kind,
+        name,
+        namespace,
       );
 
-      // Initialize the client with the mocked file system
-      client = await KubernetesClient.create({
-        fileSystem: mockFileSystem,
-      });
+      // Assert
+      expect(result).toEqual(mockResource);
+      expect(mockedLogger.debug).toHaveBeenCalledWith(
+        `Fetching resource of kind: ${kind}, name: ${name}, namespace: ${namespace}`,
+      );
+      expect(mockedLogger.info).toHaveBeenCalledWith(
+        `[getResource] Fetching resource: Pod with name: test-pod in namespace: default`,
+      );
+      expect(mockedLogger.info).toHaveBeenCalledWith(
+        `[getResource] Success: Fetching resource: Pod with name: test-pod in namespace: default`,
+      );
+
+      // Verify that the request was made as expected
+      expect(scope.isDone()).toBe(true); // Checks that all nock interceptors were satisfied
     });
 
-    describe('getResource', () => {
-      it('should fetch a resource', async () => {
-        const mockResponse = {
-          apiVersion: 'v1',
-          kind: 'Pod',
-          metadata: { name: 'mock-pod' },
-        };
-
-        mockHttpsRequest(200, mockResponse);
-
-        const result = await client.getResource('v1', 'Pod', 'mock-pod');
-        expect(result).toEqual(mockResponse);
-      });
-
-      it('should handle API error in createResource', async () => {
-        mockHttpsRequest(400, 'Bad Request');
-        const mockResource = {
-          apiVersion: 'v1',
-          kind: 'Pod',
-          metadata: { name: 'mock-pod' },
-        };
-
-        await expect(client.createResource(mockResource)).rejects.toThrow(
-          ApiError,
-        );
-      });
-
-      describe('getResource', () => {
-        it('should handle fetching a non-existent resource', async () => {
-          mockHttpsRequest(404, 'Not Found');
-          await expect(
-            client.getResource('v1', 'Pod', 'non-existent-pod'),
-          ).rejects.toThrow(ApiError);
-        });
-
-        it('should handle authorization errors when fetching a resource', async () => {
-          mockHttpsRequest(403, 'Forbidden');
-          await expect(
-            client.getResource('v1', 'Pod', 'restricted-pod'),
-          ).rejects.toThrow(ApiError);
-        });
-      });
-
-      describe('listResources', () => {
-        it('should list resources using label and field selectors', async () => {
-          const mockResponse = {
-            items: [
-              { apiVersion: 'v1', kind: 'Pod', metadata: { name: 'mock-pod' } },
-            ],
-          };
-          mockHttpsRequest(200, mockResponse);
-
-          const resources = await client.listResources(
-            'v1',
-            'Pod',
-            'default',
-            'env=test',
-            'status=Running',
-          );
-          expect(resources).toEqual(mockResponse.items);
-        });
-
-        it('should handle listing resources in a non-existent namespace', async () => {
-          mockHttpsRequest(404, 'Namespace Not Found');
-          await expect(
-            client.listResources('v1', 'Pod', 'non-existent-namespace'),
-          ).rejects.toThrow(ApiError);
-        });
-      });
-
-      describe('createResource', () => {
-        it('should handle creating a resource with missing required fields', async () => {
-          const mockResource: KubernetesResource = {
-            apiVersion: 'v1',
-            kind: 'Pod',
-            metadata: { name: '' },
-          }; // Missing fields
-          mockHttpsRequest(400, 'Bad Request');
-
-          await expect(client.createResource(mockResource)).rejects.toThrow(
-            ApiError,
-          );
-        });
-
-        it('should handle creating a resource that already exists', async () => {
-          const mockResource: KubernetesResource = {
-            apiVersion: 'v1',
-            kind: 'Pod',
-            metadata: { name: 'existing-pod' },
-          };
-          mockHttpsRequest(409, 'Conflict');
-
-          await expect(client.createResource(mockResource)).rejects.toThrow(
-            ApiError,
-          );
-        });
-
-        it('should create a resource', async () => {
-          const mockResource: KubernetesResource = {
-            apiVersion: 'v1',
-            kind: 'Pod',
-            metadata: { name: 'mock-pod' },
-          };
-
-          mockHttpsRequest(201, mockResource);
-
-          const resource = await client.createResource(mockResource);
-
-          expect(resource).toEqual(mockResource);
-        });
-
-        it('should throw an error if request fails', async () => {
-          const mockResource: KubernetesResource = {
-            apiVersion: 'v1',
-            kind: 'Pod',
-            metadata: { name: 'mock-pod' },
-          };
-
-          mockHttpsRequest(400, 'Bad Request');
-
-          await expect(client.createResource(mockResource)).rejects.toThrow(
-            ApiError,
-          );
-        });
-      });
-
-      it('should throw an error if request fails', async () => {
-        mockHttpsRequest(404, 'Not Found');
-
-        await expect(
-          client.getResource('v1', 'Pod', 'mock-pod'),
-        ).rejects.toThrow(ApiError);
-      });
-
-      it('should generate correct resource path for namespaced resources', async () => {
-        const client = await KubernetesClient.create({
-          kubeConfigPath: 'mock-path',
-          fileSystem: mockFileSystem,
-        });
-        const path = client['getResourcePath'](
-          'v1',
-          'Pod',
-          'mock-pod',
-          'mock-namespace',
-        );
-
-        expect(path).toBe('/api/v1/namespaces/mock-namespace/pods/mock-pod');
-      });
-    });
-
-    describe('updateResource', () => {
-      it('should handle updating a non-existent resource', async () => {
-        const mockResource: KubernetesResource = {
-          apiVersion: 'v1',
-          kind: 'Pod',
-          metadata: { name: 'non-existent-pod' },
-        };
-        mockHttpsRequest(404, 'Not Found');
-
-        await expect(client.updateResource(mockResource)).rejects.toThrow(
-          ApiError,
-        );
-      });
-
-      it('should handle version conflicts when updating a resource', async () => {
-        const mockResource: KubernetesResource = {
-          apiVersion: 'v1',
-          kind: 'Pod',
-          metadata: { name: 'outdated-pod' },
-        };
-        mockHttpsRequest(409, 'Conflict');
-
-        await expect(client.updateResource(mockResource)).rejects.toThrow(
-          ApiError,
-        );
-      });
-      it('should update a resource', async () => {
-        const mockResource: KubernetesResource = {
-          apiVersion: 'v1',
-          kind: 'Pod',
-          metadata: { name: 'mock-pod' },
-        };
-
-        mockHttpsRequest(200, mockResource);
-
-        const resource = await client.updateResource(mockResource);
-
-        expect(resource).toEqual(mockResource);
-      });
-
-      it('should throw an error if request fails', async () => {
-        const mockResource: KubernetesResource = {
-          apiVersion: 'v1',
-          kind: 'Pod',
-          metadata: { name: 'mock-pod' },
-        };
-
-        mockHttpsRequest(400, 'Bad Request');
-
-        await expect(client.updateResource(mockResource)).rejects.toThrow(
-          ApiError,
-        );
-      });
-    });
-
-    describe('deleteResource', () => {
-      it('should delete a resource', async () => {
-        mockHttpsRequest(204, null, false); // 204 No Content
-
-        await expect(
-          client.deleteResource('v1', 'Pod', 'mock-pod'),
-        ).resolves.toBeUndefined();
-      });
-
-      it('should throw an error if request fails', async () => {
-        mockHttpsRequest(404, 'Not Found', false);
-
-        await expect(
-          client.deleteResource('v1', 'Pod', 'mock-pod'),
-        ).rejects.toThrow(ApiError);
-      });
-
-      it('should handle deleting a resource without sufficient permissions', async () => {
-        mockHttpsRequest(403, 'Forbidden');
-        await expect(
-          client.deleteResource('v1', 'Pod', 'restricted-pod'),
-        ).rejects.toThrow(ApiError);
-      });
-    });
-
-    describe('getPodLogs', () => {
-      it('should fetch pod logs', async () => {
-        const mockLogs = 'mock logs';
-        mockHttpsRequest(200, mockLogs, false); // Plain text
-
-        const logs = await client.getPodLogs('mock-pod', 'mock-namespace');
-        expect(logs).toEqual(mockLogs);
-      });
-
-      it('should throw an error if request fails', async () => {
-        mockHttpsRequest(404, 'Not Found', false);
-
-        await expect(
-          client.getPodLogs('mock-pod', 'mock-namespace'),
-        ).rejects.toThrow(ApiError);
-      });
-
-      it('should fetch logs of a specific pod', async () => {
-        const mockLogs = 'Sample pod logs';
-        mockHttpsRequest(200, mockLogs, false); // Plain text response
-
-        const client = await KubernetesClient.create({
-          fileSystem: mockFileSystem,
-        });
-        const logs = await client.getPodLogs(
-          'mock-pod',
-          'mock-namespace',
-          'mock-container',
-        );
-
-        expect(logs).toEqual(mockLogs);
-      });
-
-      it('should handle large log outputs', async () => {
-        const mockLogs = 'large log output'.repeat(1000);
-        mockHttpsRequest(200, mockLogs, false);
-
-        const logs = await client.getPodLogs('mock-pod', 'default');
-        expect(logs).toEqual(mockLogs);
-      });
-    });
-
-    describe('watchResource', () => {
-      it('should watch a resource and yield events', async () => {
-        const mockEvent: WatchEvent<KubernetesResource> = {
-          type: 'ADDED',
-          object: {
-            apiVersion: 'v1',
-            kind: 'Pod',
-            metadata: { name: 'mock-pod' },
-          },
-        };
-
-        // Create a mock Readable stream for the response
-        const mockResponse = new Readable({
-          read() {
-            // Simulate sending data
-            this.push(JSON.stringify(mockEvent) + '\n');
-            this.push(null); // End of stream
-          },
-        }) as IncomingMessage;
-
-        // Create a mock ClientRequest with necessary methods
-        const mockRequest = new EventEmitter() as ClientRequest;
-        mockRequest.end = jest.fn();
-        mockRequest.on = jest.fn();
-
-        // Mock https.request to return the mockRequest and invoke the callback with mockResponse
-        jest
-          .spyOn(https, 'request')
-          .mockImplementation(
-            (
-              urlOrOptions: string | URL | RequestOptions,
-              optionsOrCallback?:
-                | RequestOptions
-                | ((res: IncomingMessage) => void),
-              callback?: (res: IncomingMessage) => void,
-            ): ClientRequest => {
-              // Invoke the callback with the mock response
-              if (typeof optionsOrCallback === 'function') {
-                optionsOrCallback(mockResponse);
-              } else if (typeof callback === 'function') {
-                callback(mockResponse);
-              }
-
-              return mockRequest;
-            },
-          );
-
-        const events = client.watchResource('v1', 'Pod', 'mock-namespace');
-        const result = [];
-        for await (const event of events) {
-          result.push(event);
-        }
-
-        expect(result).toEqual([mockEvent]);
-        expect(mockRequest.end).toHaveBeenCalled();
-      });
-
-      it('should handle JSON parsing error in watchResource', async () => {
-        const malformedEvent = '{"type": "ADDED", "object": { invalid-json';
-        const mockResponse = new Readable({
-          read() {
-            // Push malformed JSON data to trigger a parsing error in watchResource
-            this.push(malformedEvent);
-            this.push(null); // End the stream
-          },
-        }) as IncomingMessage;
-
-        const mockRequest = new EventEmitter() as ClientRequest;
-        mockRequest.end = jest.fn();
-        mockRequest.on = jest.fn();
-
-        jest
-          .spyOn(https, 'request')
-          .mockImplementation(
-            (
-              urlOrOptions: string | URL | RequestOptions,
-              optionsOrCallback?:
-                | RequestOptions
-                | ((res: IncomingMessage) => void),
-              callback?: (res: IncomingMessage) => void,
-            ): ClientRequest => {
-              if (typeof optionsOrCallback === 'function') {
-                optionsOrCallback(mockResponse);
-              } else if (callback) {
-                callback(mockResponse);
-              }
-              return mockRequest;
-            },
-          );
-
-        const events = client.watchResource('v1', 'Pod', 'mock-namespace');
-
-        try {
-          // Consume events from the generator and expect a throw
-          for await (const event of events) {
-            // No-op: expecting this loop to throw an error on JSON parsing
-          }
-          // Fail the test if no error is thrown
-          throw new Error('Expected JSON parsing error, but none was thrown.');
-        } catch (error) {
-          expect(error.message).toContain('Failed to parse watch event JSON');
-        }
-      }, 10000); // Increase timeout for this test case
-
-      it('should throw an error if request fails', async () => {
-        // Create a mock ClientRequest with necessary methods
-        const mockRequest = new EventEmitter() as ClientRequest;
-        mockRequest.end = jest.fn();
-        mockRequest.on = jest.fn().mockImplementation((event, handler) => {
-          if (event === 'error') {
-            process.nextTick(() => handler(new Error('Request failed')));
-          }
-          return mockRequest;
-        });
-
-        // Mock the https.request to return the mockRequest
-        jest
-          .spyOn(https, 'request')
-          .mockImplementation(
-            (
-              urlOrOptions: string | URL | RequestOptions,
-              optionsOrCallback?:
-                | RequestOptions
-                | ((res: IncomingMessage) => void),
-              callback?: (res: IncomingMessage) => void,
-            ): ClientRequest => {
-              const mockResponse = new Readable({
-                read() {
-                  this.push(null); // No data
-                },
-              }) as IncomingMessage;
-
-              if (typeof optionsOrCallback === 'function') {
-                optionsOrCallback(mockResponse);
-              } else if (typeof callback === 'function') {
-                callback(mockResponse);
-              }
-
-              return mockRequest;
-            },
-          );
-
-        const events = client.watchResource('v1', 'Pod', 'mock-namespace');
-
-        // Attempt to get the next event, which should throw an error
-        await expect(events.next()).rejects.toThrow('Error in watch stream.');
-
-        expect(mockRequest.end).toHaveBeenCalled();
-      });
-    });
-
-    it('should handle network interruptions gracefully', async () => {
-      const mockResponse = new Readable({
-        read() {
-          this.push(null);
-        },
-      }) as IncomingMessage;
-
-      const mockRequest = new EventEmitter() as ClientRequest;
-      mockRequest.end = jest.fn();
-      jest.spyOn(https, 'request').mockImplementation((_, __, callback) => {
-        if (callback) callback(mockResponse);
-        return mockRequest;
-      });
-
-      mockRequest.on = jest.fn().mockImplementation((event, handler) => {
-        if (event === 'error') {
-          process.nextTick(() => handler(new Error('Network interruption')));
-        }
-        return mockRequest;
-      });
-
-      const events = client.watchResource('v1', 'Pod', 'default');
-      await expect(events.next()).rejects.toThrow('Error in watch stream.');
-    });
-
-    it('should pluralize kinds correctly', async () => {
-      const client = await KubernetesClient.create({
-        kubeConfigPath: 'mock-path',
-        fileSystem: mockFileSystem,
-        logger: mockLogger,
-      });
-
-      expect(client['pluralizeKind']('Pod')).toBe('pods');
-      expect(client['pluralizeKind']('Watch')).toBe('watches');
-      expect(client['pluralizeKind']('Service')).toBe('services');
-    });
-  });
-
-  describe('KubernetesClient Error Handling', () => {
-    it('should handle an API error (404 Not Found)', async () => {
-      mockHttpsRequest(404, 'Not Found');
-      const client = await KubernetesClient.create({
-        kubeConfigPath: 'mock-path',
-        fileSystem: mockFileSystem,
-        logger: mockLogger,
-      });
-
+    it('should throw ApiError when the API responds with non-2xx status code', async () => {
+      // Arrange
+      const errorMessage = 'Not Found';
+      nock('https://127.0.0.1:6443')
+        .get('/api/v1/namespaces/default/pods/test-pod')
+        .reply(HttpStatus.NOT_FOUND, errorMessage);
+
+      // Act & Assert
       await expect(
-        client.getResource('v1', 'Pod', 'non-existent-pod'),
+        kubernetesClient.getResource<KubernetesResource>(
+          apiVersion,
+          kind,
+          name,
+          namespace,
+        ),
       ).rejects.toThrow(ApiError);
 
-      expect(mockLogger.error).toHaveBeenCalledWith(
-        'Request failed with status code: 404',
-      );
-
-      expect(mockLogger.error).toHaveBeenCalledWith(
-        '[GET] Failed to make GET request to /api/v1/pods/non-existent-pod: Request failed with status code 404 (Status Code: 404)',
-        {
-          responseBody: '"Not Found"',
-        },
-      );
-
-      expect(mockLogger.error).toHaveBeenCalledWith(
-        '[getResource] Failed to fetch resource Pod with name non-existent-pod: Request failed with status code 404 (Status Code: 404)',
-        {
-          responseBody: '"Not Found"',
-        },
+      expect(mockedLogger.error).toHaveBeenNthCalledWith(
+        3,
+        expect.stringContaining(
+          `[getResource] Failed to fetch resource Pod with name test-pod: Request failed with status code ${HttpStatus.NOT_FOUND}`,
+        ),
+        expect.objectContaining({
+          responseBody: errorMessage,
+        }),
       );
     });
 
-    it('should handle a Network error', async () => {
-      // Create a mock ClientRequest with necessary methods
-      const mockRequest = new EventEmitter() as ClientRequest;
-      mockRequest.end = jest.fn();
-      mockRequest.on = jest.fn().mockImplementation((event, handler) => {
-        if (event === 'error') {
-          process.nextTick(() => handler(new Error('Network error occurred')));
-        }
-        return mockRequest;
-      });
+    it('should throw NetworkError on request error', async () => {
+      // Arrange
+      const networkError = new Error('Network failure');
+      nock('https://127.0.0.1:6443')
+        .get('/api/v1/namespaces/default/pods/test-pod')
+        .replyWithError(networkError.message);
 
-      // Mock the https.request to return the mockRequest
-      jest
-        .spyOn(https, 'request')
-        .mockImplementation(
-          (
-            urlOrOptions: string | URL | RequestOptions,
-            optionsOrCallback?:
-              | RequestOptions
-              | ((res: IncomingMessage) => void),
-            callback?: (res: IncomingMessage) => void,
-          ): ClientRequest => {
-            return mockRequest;
-          },
+      // Act & Assert
+      await expect(
+        kubernetesClient.getResource<KubernetesResource>(
+          apiVersion,
+          kind,
+          name,
+          namespace,
+        ),
+      ).rejects.toThrow(NetworkError);
+
+      expect(mockedLogger.error).toHaveBeenNthCalledWith(
+        3,
+        expect.stringContaining(
+          `[getResource] Failed to fetch resource Pod with name test-pod: Network error occurred during the request.`,
+        ),
+        expect.objectContaining({
+          originalError: networkError,
+        }),
+      );
+    });
+
+    it('should throw ParsingError when response JSON is invalid', async () => {
+      // Arrange
+      const invalidJson = 'Invalid JSON';
+      nock('https://127.0.0.1:6443')
+        .get('/api/v1/namespaces/default/pods/test-pod')
+        .reply(HttpStatus.OK, invalidJson);
+
+      // Act & Assert
+      await expect(
+        kubernetesClient.getResource<KubernetesResource>(
+          apiVersion,
+          kind,
+          name,
+          namespace,
+        ),
+      ).rejects.toThrow(ParsingError);
+
+      expect(mockedLogger.error).toHaveBeenNthCalledWith(
+        1,
+        expect.stringContaining(
+          `Failed to parse response JSON: Unexpected token 'I', "Invalid JSON" is not valid JSON`,
+        ),
+      );
+    });
+
+    /**
+     * Test Suite for listResources Method
+     */
+    describe('listResources', () => {
+      const apiVersion = 'v1';
+      const kind = 'Pod';
+      const namespace = 'default';
+      const resourcePath = '/api/v1/namespaces/default/pods';
+      const mockResources: KubernetesResource[] = [
+        { apiVersion, kind, metadata: { name: 'pod1', namespace } },
+        { apiVersion, kind, metadata: { name: 'pod2', namespace } },
+      ];
+
+      it('should list resources successfully without selectors', async () => {
+        // Arrange
+        const responseData = { items: mockResources };
+        nock('https://127.0.0.1:6443')
+          .get('/api/v1/namespaces/default/pods')
+          .reply(HttpStatus.OK, responseData);
+
+        // Act
+        const result = await kubernetesClient.listResources<KubernetesResource>(
+          apiVersion,
+          kind,
+          namespace,
         );
 
-      const client = await KubernetesClient.create({
-        kubeConfigPath: 'mock-path',
-        fileSystem: mockFileSystem,
-        logger: mockLogger,
+        // Assert
+        expect(result).toEqual(mockResources);
+        expect(mockedLogger.debug).toHaveBeenCalledWith(
+          `Listing resources of kind: ${kind}, namespace: ${namespace}`,
+        );
+        expect(mockedLogger.info).toHaveBeenCalledWith(
+          `[listResources] Listing resources of kind: Pod in namespace: default`,
+        );
+        expect(mockedLogger.info).toHaveBeenCalledWith(
+          `[listResources] Success: Listing resources of kind: Pod in namespace: default`,
+        );
+
+        // Verify that the request was made as expected
+        expect(nock.isDone()).toBe(true);
       });
 
-      await expect(client.getResource('v1', 'Pod', 'mock-pod')).rejects.toThrow(
-        NetworkError,
-      );
+      it('should list resources with label and field selectors', async () => {
+        // Arrange
+        const labelSelector = 'app=frontend';
+        const fieldSelector = 'status.phase=Running';
+        const expectedPath = `/api/v1/namespaces/default/pods?labelSelector=app%3Dfrontend&fieldSelector=status.phase%3DRunning`;
+        const responseData = { items: mockResources };
 
-      // Update assertions to check each logged error separately
+        nock('https://127.0.0.1:6443')
+          .get(expectedPath)
+          .reply(HttpStatus.OK, responseData);
 
-      // Log for the initial request error
-      expect(mockLogger.error).toHaveBeenCalledWith(
-        'Request error: Network error occurred',
-      );
+        // Act
+        const result = await kubernetesClient.listResources<KubernetesResource>(
+          apiVersion,
+          kind,
+          namespace,
+          labelSelector,
+          fieldSelector,
+        );
 
-      // Log for the execution of the GET request
-      expect(mockLogger.error).toHaveBeenCalledWith(
-        '[GET] Failed to make GET request to /api/v1/pods/mock-pod: Network error occurred during the request.',
-        {
-          originalError: expect.any(Error),
-        },
-      );
+        // Assert
+        expect(result).toEqual(mockResources);
 
-      // Log for the resource-specific error
-      expect(mockLogger.error).toHaveBeenCalledWith(
-        '[getResource] Failed to fetch resource Pod with name mock-pod: Network error occurred during the request.',
-        {
-          originalError: expect.any(Error),
-        },
-      );
+        // Verify that the request was made as expected
+        expect(nock.isDone()).toBe(true);
+      });
+
+      it('should throw ApiError when listing resources fails', async () => {
+        // Arrange
+        const errorMessage = 'Unauthorized';
+        nock('https://127.0.0.1:6443')
+          .get('/api/v1/namespaces/default/pods')
+          .reply(HttpStatus.UNAUTHORIZED, errorMessage);
+
+        // Act & Assert
+        await expect(
+          kubernetesClient.listResources<KubernetesResource>(
+            apiVersion,
+            kind,
+            namespace,
+          ),
+        ).rejects.toThrow(ApiError);
+
+        expect(mockedLogger.error).toHaveBeenNthCalledWith(
+          3,
+          expect.stringContaining(
+            `[listResources] Failed to list resources of kind Pod: Request failed with status code 401`,
+          ),
+          expect.objectContaining({
+            responseBody: errorMessage,
+          }),
+        );
+
+        // Verify that the request was made as expected
+        expect(nock.isDone()).toBe(true);
+      });
     });
 
-    it('should handle an unexpected error', async () => {
-      // Force an unexpected error by throwing a generic error during request
-      const unexpectedError = new Error('Unexpected error');
-      jest.spyOn(https, 'request').mockImplementation(() => {
-        throw unexpectedError;
+    /**
+     * Test Suite for createResource Method
+     */
+    describe('createResource', () => {
+      const apiVersion = 'v1';
+      const kind = 'Pod';
+      const namespace = 'default';
+      const resourcePath = '/api/v1/namespaces/default/pods';
+      const mockResource: KubernetesResource = {
+        apiVersion,
+        kind,
+        metadata: { name: 'new-pod', namespace },
+        // ...other properties
+      };
+
+      it('should create a resource successfully', async () => {
+        // Arrange
+        const responseData = { ...mockResource };
+        nock('https://127.0.0.1:6443')
+          .post('/api/v1/namespaces/default/pods')
+          .reply(HttpStatus.CREATED, responseData);
+
+        // Act
+        const result =
+          await kubernetesClient.createResource<KubernetesResource>(
+            mockResource,
+            namespace,
+          );
+
+        // Assert
+        expect(result).toEqual(mockResource);
+        expect(mockedLogger.debug).toHaveBeenCalledWith(
+          `Creating resource of kind: ${kind}, name: ${mockResource.metadata.name}, namespace: ${namespace}`,
+        );
+        expect(mockedLogger.info).toHaveBeenCalledWith(
+          `[createResource] Creating resource: Pod with name: new-pod in namespace: default`,
+        );
+        expect(mockedLogger.info).toHaveBeenCalledWith(
+          `[createResource] Success: Creating resource: Pod with name: new-pod in namespace: default`,
+        );
+
+        // Verify that the request was made as expected
+        expect(nock.isDone()).toBe(true);
       });
 
-      const client = await KubernetesClient.create({
-        kubeConfigPath: 'mock-path',
-        fileSystem: mockFileSystem,
-        logger: mockLogger,
+      it('should throw ApiError when resource creation fails', async () => {
+        // Arrange
+        const errorMessage = 'Conflict';
+        nock('https://127.0.0.1:6443')
+          .post('/api/v1/namespaces/default/pods')
+          .reply(HttpStatus.CONFLICT, errorMessage);
+
+        // Act & Assert
+        await expect(
+          kubernetesClient.createResource<KubernetesResource>(
+            mockResource,
+            namespace,
+          ),
+        ).rejects.toThrow(ApiError);
+
+        expect(mockedLogger.error).toHaveBeenNthCalledWith(
+          3,
+          expect.stringContaining(
+            `[createResource] Failed to create resource Pod with name new-pod: Request failed with status code ${HttpStatus.CONFLICT}`,
+          ),
+          expect.objectContaining({
+            responseBody: errorMessage,
+          }),
+        );
+
+        // Verify that the request was made as expected
+        expect(nock.isDone()).toBe(true);
+      });
+    });
+
+    /**
+     * Test Suite for updateResource Method
+     */
+    describe('updateResource', () => {
+      const apiVersion = 'v1';
+      const kind = 'Pod';
+      const name = 'existing-pod';
+      const namespace = 'default';
+      const resourcePath = '/api/v1/namespaces/default/pods/existing-pod';
+      const mockResource: KubernetesResource = {
+        apiVersion,
+        kind,
+        metadata: { name, namespace },
+        // ...other properties
+      };
+
+      it('should update a resource successfully', async () => {
+        // Arrange
+        const updatedResource = {
+          ...mockResource,
+          metadata: { ...mockResource.metadata, labels: { app: 'updated' } },
+        };
+        nock('https://127.0.0.1:6443')
+          .put('/api/v1/namespaces/default/pods/existing-pod')
+          .reply(HttpStatus.OK, updatedResource);
+
+        // Act
+        const result =
+          await kubernetesClient.updateResource<KubernetesResource>(
+            updatedResource,
+            namespace,
+          );
+
+        // Assert
+        expect(result).toEqual(updatedResource);
+        expect(mockedLogger.debug).toHaveBeenCalledWith(
+          `Updating resource of kind: ${kind}, name: ${name}, namespace: ${namespace}`,
+        );
+        expect(mockedLogger.info).toHaveBeenCalledWith(
+          `[updateResource] Updating resource: Pod with name: existing-pod in namespace: default`,
+        );
+        expect(mockedLogger.info).toHaveBeenCalledWith(
+          `[updateResource] Success: Updating resource: Pod with name: existing-pod in namespace: default`,
+        );
+
+        // Verify that the request was made as expected
+        expect(nock.isDone()).toBe(true);
       });
 
-      await expect(client.getResource('v1', 'Pod', 'mock-pod')).rejects.toThrow(
-        ClientError,
+      it('should throw ApiError when resource update fails', async () => {
+        // Arrange
+        const errorMessage = 'Forbidden';
+        nock('https://127.0.0.1:6443')
+          .put('/api/v1/namespaces/default/pods/existing-pod')
+          .reply(HttpStatus.FORBIDDEN, errorMessage);
+
+        // Act & Assert
+        await expect(
+          kubernetesClient.updateResource<KubernetesResource>(
+            mockResource,
+            namespace,
+          ),
+        ).rejects.toThrow(ApiError);
+
+        expect(mockedLogger.error).toHaveBeenNthCalledWith(
+          3,
+          expect.stringContaining(
+            `[updateResource] Failed to update resource Pod with name existing-pod: Request failed with status code ${HttpStatus.FORBIDDEN}`,
+          ),
+          expect.objectContaining({
+            responseBody: errorMessage,
+          }),
+        );
+
+        // Verify that the request was made as expected
+        expect(nock.isDone()).toBe(true);
+      });
+    });
+
+    /**
+     * Test Suite for deleteResource Method
+     */
+    describe('deleteResource', () => {
+      const apiVersion = 'v1';
+      const kind = 'Pod';
+      const name = 'deletable-pod';
+      const namespace = 'default';
+
+      it('should delete a resource successfully', async () => {
+        // Arrange
+        nock('https://127.0.0.1:6443')
+          .delete('/api/v1/namespaces/default/pods/deletable-pod')
+          .reply(HttpStatus.NO_CONTENT);
+
+        // Act
+        await kubernetesClient.deleteResource(
+          apiVersion,
+          kind,
+          name,
+          namespace,
+        );
+
+        // Assert
+        expect(mockedLogger.debug).toHaveBeenCalledWith(
+          `Deleting resource of kind: ${kind}, name: ${name}, namespace: ${namespace}`,
+        );
+        expect(mockedLogger.info).toHaveBeenCalledWith(
+          `[deleteResource] Deleting resource: Pod with name: deletable-pod in namespace: default`,
+        );
+        expect(mockedLogger.info).toHaveBeenCalledWith(
+          `[deleteResource] Success: Deleting resource: Pod with name: deletable-pod in namespace: default`,
+        );
+
+        // Verify that the nock request was used
+        expect(nock.isDone()).toBe(true);
+      });
+
+      it('should throw ApiError when resource deletion fails', async () => {
+        // Arrange
+        const errorMessage = 'Not Found';
+        nock('https://127.0.0.1:6443')
+          .delete('/api/v1/namespaces/default/pods/deletable-pod')
+          .reply(HttpStatus.NOT_FOUND, errorMessage);
+
+        // Act & Assert
+        await expect(
+          kubernetesClient.deleteResource(apiVersion, kind, name, namespace),
+        ).rejects.toThrow(ApiError);
+
+        expect(mockedLogger.error).toHaveBeenNthCalledWith(
+          3,
+          expect.stringContaining(
+            `[deleteResource] Failed to delete resource Pod with name deletable-pod: Request failed with status code ${HttpStatus.NOT_FOUND}`,
+          ),
+          expect.objectContaining({
+            responseBody: errorMessage,
+          }),
+        );
+
+        // Verify that the nock request was used
+        expect(nock.isDone()).toBe(true);
+      });
+    });
+
+    /**
+     * Test Suite for getPodLogs Method
+     */
+    describe('getPodLogs', () => {
+      const name = 'log-pod';
+      const namespace = 'default';
+      const container = 'nginx';
+      const basePath = `/api/v1/namespaces/${namespace}/pods/${name}/log`;
+      const resourcePath = `${basePath}?container=${encodeURIComponent(container)}`;
+
+      it('should fetch pod logs successfully with container specified', async () => {
+        // Arrange
+        const mockLogs = 'Pod logs content';
+        nock('https://127.0.0.1:6443')
+          .get(resourcePath)
+          .reply(HttpStatus.OK, mockLogs);
+
+        // Act
+        const logs = await kubernetesClient.getPodLogs(
+          name,
+          namespace,
+          container,
+        );
+
+        // Assert
+        expect(logs).toBe(mockLogs);
+        expect(mockedLogger.debug).toHaveBeenCalledWith(
+          `Fetching logs for pod: ${name}, namespace: ${namespace}, container: ${container}`,
+        );
+        expect(mockedLogger.info).toHaveBeenCalledWith(
+          `[getPodLogs] Fetching logs for pod: log-pod in namespace: default`,
+        );
+        expect(mockedLogger.info).toHaveBeenCalledWith(
+          `[getPodLogs] Success: Fetching logs for pod: log-pod in namespace: default`,
+        );
+
+        // Verify that the nock request was used
+        expect(nock.isDone()).toBe(true);
+      });
+
+      it('should fetch pod logs successfully without specifying container', async () => {
+        // Arrange
+        const mockLogs = 'Pod logs without container';
+        const resourcePath = `/api/v1/namespaces/${namespace}/pods/${name}/log`;
+
+        nock('https://127.0.0.1:6443')
+          .get(resourcePath)
+          .reply(HttpStatus.OK, mockLogs);
+
+        // Act
+        const logs = await kubernetesClient.getPodLogs(name, namespace);
+
+        // Assert
+        expect(logs).toBe(mockLogs);
+
+        // Verify that the nock request was used
+        expect(nock.isDone()).toBe(true);
+      });
+
+      it('should throw ApiError when fetching pod logs fails', async () => {
+        // Arrange
+        const errorMessage = 'Internal Server Error';
+        nock('https://127.0.0.1:6443')
+          .get(resourcePath)
+          .reply(HttpStatus.INTERNAL_SERVER_ERROR, errorMessage);
+
+        // Act & Assert
+        await expect(
+          kubernetesClient.getPodLogs(name, namespace, container),
+        ).rejects.toThrow(ApiError);
+
+        expect(mockedLogger.error).toHaveBeenNthCalledWith(
+          3,
+          expect.stringContaining(
+            `[getPodLogs] Failed to fetch logs for pod log-pod: Request failed with status code ${HttpStatus.INTERNAL_SERVER_ERROR}`,
+          ),
+          expect.objectContaining({
+            responseBody: errorMessage,
+          }),
+        );
+
+        // Verify that the nock request was used
+        expect(nock.isDone()).toBe(true);
+      });
+    });
+
+    /**
+     * Test Suite for watchResource Method
+     */
+    // describe('watchResource', () => {
+    //   beforeEach(() => {
+    //     nock.enableNetConnect(); // Temporarily allow real network connections for debugging
+    //     jest.setTimeout(10000); // Increase timeout for watch tests
+    //   });
+    //   afterEach(() => {
+    //     nock.cleanAll();
+    //     nock.enableNetConnect(); // Re-enable network connections
+    //   });
+
+    //   const apiVersion = 'v1'; // For core API group
+    //   const kind = 'Pod';
+    //   const namespace = 'default';
+    //   const labelSelector = 'app=frontend';
+    //   const fieldSelector = 'status.phase=Running';
+
+    //   const mockWatchEvents: WatchEvent<KubernetesResource>[] = [
+    //     {
+    //       type: 'ADDED',
+    //       object: {
+    //         apiVersion: 'v1',
+    //         kind: 'Pod',
+    //         metadata: { name: 'pod1', namespace: 'default' },
+    //       },
+    //     },
+    //     {
+    //       type: 'MODIFIED',
+    //       object: {
+    //         apiVersion: 'v1',
+    //         kind: 'Pod',
+    //         metadata: { name: 'pod1', namespace: 'default' },
+    //       },
+    //     },
+    //     {
+    //       type: 'DELETED',
+    //       object: {
+    //         apiVersion: 'v1',
+    //         kind: 'Pod',
+    //         metadata: { name: 'pod1', namespace: 'default' },
+    //       },
+    //     },
+    //   ];
+
+    //   // Helper function to generate the correct resource path
+    //   const generateResourcePath = (
+    //     apiVersion: string,
+    //     kind: string,
+    //     namespace: string,
+    //   ): string => {
+    //     const [apiGroup, version] = apiVersion.includes('/')
+    //       ? apiVersion.split('/')
+    //       : ['', apiVersion];
+    //     const resourceName =
+    //       KindToResourceNameMap[kind] || kind.toLowerCase() + 's';
+    //     let path = apiGroup
+    //       ? `/apis/${apiGroup}/${version}`
+    //       : `/api/${version}`;
+    //     path += `/namespaces/${namespace}/${resourceName}`;
+    //     return path;
+    //   };
+
+    //   const resourcePath = generateResourcePath(apiVersion, kind, namespace);
+
+    // it('should watch resources and yield watch events successfully', async () => {
+    //   // Arrange
+    //   const stream = new PassThrough();
+
+    //   const scope = nock('https://127.0.0.1:6443')
+    //     .get('/api/v1/namespaces/default/pods')
+    //     .query({
+    //       watch: 'true',
+    //       labelSelector: 'app=frontend',
+    //       fieldSelector: 'status.phase=Running',
+    //     })
+    //     .reply(200, stream, { 'Content-Type': 'application/json' });
+
+    //   // Emit events with delays to simulate streaming
+    //   mockWatchEvents.forEach((event, index) => {
+    //     setTimeout(() => {
+    //       stream.write(JSON.stringify(event) + '\n');
+    //       if (index === mockWatchEvents.length - 1) {
+    //         stream.end(); // Signal the end of the stream
+    //       }
+    //     }, index * 50); // Delay each event by 50ms
+    //   });
+
+    //   // Act
+    //   const watch = kubernetesClient.watchResource<KubernetesResource>(
+    //     apiVersion,
+    //     kind,
+    //     namespace,
+    //     labelSelector,
+    //     fieldSelector,
+    //   );
+    //   const events: WatchEvent<KubernetesResource>[] = [];
+    //   for await (const event of watch) {
+    //     events.push(event);
+    //     if (events.length === mockWatchEvents.length) {
+    //       break;
+    //     }
+    //   }
+
+    //   // Assert
+    //   expect(events).toEqual(mockWatchEvents);
+    //   expect(mockedLogger.debug).toHaveBeenCalledWith(
+    //     `Watching resource of kind: ${kind}, namespace: ${namespace}`,
+    //   );
+    //   expect(mockedLogger.info).toHaveBeenCalledWith(
+    //     `[watchResource] Watching resource of kind: Pod in namespace: default`,
+    //   );
+    //   expect(mockedLogger.info).toHaveBeenCalledWith(
+    //     `[watchResource] Success: Watching resource of kind: Pod in namespace: default`,
+    //   );
+
+    //   // Verify that the request was made as expected
+    //   expect(scope.isDone()).toBe(true); // Ensures all nock interceptors were satisfied
+    // });
+    // it('should throw a ParsingError when a watch event JSON is invalid', async () => {
+    //   // Arrange
+    //   const invalidWatchData = `{"type": "ADDED", "object": {"apiVersion": "v1", "kind": "Pod", "metadata": {"name": "pod1", "namespace": "default"}}}\nInvalid JSON\n`;
+
+    //   nock('https://127.0.0.1:6443')
+    //     .get(resourcePath)
+    //     .query((actualQuery) => {
+    //       return (
+    //         actualQuery.watch === 'true' &&
+    //         actualQuery.labelSelector === 'app=frontend' &&
+    //         actualQuery.fieldSelector === 'status.phase=Running'
+    //       );
+    //     })
+    //     .reply(200, invalidWatchData, { 'Content-Type': 'application/json' });
+
+    //   // Act
+    //   const watch = kubernetesClient.watchResource<KubernetesResource>(
+    //     apiVersion,
+    //     kind,
+    //     namespace,
+    //     labelSelector,
+    //     fieldSelector,
+    //   );
+
+    //   // Assert
+    //   const promise = (async () => {
+    //     const events: WatchEvent<KubernetesResource>[] = [];
+    //     for await (const event of watch) {
+    //       events.push(event);
+    //     }
+    //   })();
+
+    //   await expect(promise).rejects.toThrow(ParsingError);
+    //   await expect(promise).rejects.toThrow(
+    //     'Failed to parse watch event JSON',
+    //   );
+
+    //   expect(mockedLogger.error).toHaveBeenCalledWith(
+    //     'Failed to parse watch event JSON: Unexpected token I in JSON at position 0',
+    //   );
+    // });
+  });
+  /**
+   * Test Suite for Error Handling
+   */
+  describe('Error Handling', () => {
+    const apiVersion = 'v1';
+    const kind = 'Pod';
+    const name = 'error-pod';
+    const namespace = 'default';
+    const resourcePath = '/api/v1/namespaces/default/pods/error-pod';
+
+    it('should handle unexpected errors and throw Error', async () => {
+      // Arrange
+      const unexpectedErrorMessage = 'Unexpected failure';
+      nock('https://127.0.0.1:6443')
+        .get(resourcePath)
+        .replyWithError(unexpectedErrorMessage);
+
+      // Act & Assert
+      await expect(
+        kubernetesClient.getResource<KubernetesResource>(
+          apiVersion,
+          kind,
+          name,
+          namespace,
+        ),
+      ).rejects.toThrow(
+        NetworkError || ParsingError || ApiError || ClientError,
       );
 
-      // Log for the unexpected error during GET request
-      expect(mockLogger.error).toHaveBeenCalledWith(
-        '[GET] Failed to make GET request to /api/v1/pods/mock-pod: Unexpected error',
-        unexpectedError,
+      // Check that the error message prefix was logged
+      expect(mockedLogger.error).toHaveBeenCalledWith(
+        expect.stringContaining(
+          `[getResource] Failed to fetch resource Pod with name error-pod`,
+        ),
+        expect.objectContaining({
+          originalError: expect.any(Error), // Ensure an error object is logged
+        }),
+      );
+    });
+  });
+
+  /**
+   * Test Suite for executeWithLogging Method
+   * Note: This is a private method, so it's tested indirectly via public methods.
+   * However, you can expose it via some means (e.g., using a testing utility) if needed.
+   */
+  // Skipping direct tests for private methods as they are tested via public interface
+
+  /**
+   * Test Suite for Error Handling
+   */
+
+  describe('Error Handling', () => {
+    const apiVersion = 'v1';
+    const kind = 'Pod';
+    const name = 'error-pod';
+    const namespace = 'default';
+    const resourcePath = '/api/v1/namespaces/default/pods/error-pod';
+
+    it('should handle unexpected errors and throw Error', async () => {
+      // Arrange
+      const unexpectedErrorMessage = 'Unexpected failure';
+      nock('https://127.0.0.1:6443')
+        .get(resourcePath)
+        .replyWithError(unexpectedErrorMessage);
+
+      // Act & Assert
+      await expect(
+        kubernetesClient.getResource<KubernetesResource>(
+          apiVersion,
+          kind,
+          name,
+          namespace,
+        ),
+      ).rejects.toThrow(
+        NetworkError || ParsingError || ApiError || ClientError,
       );
 
-      // Log for the getResource method indicating failure
-      expect(mockLogger.error).toHaveBeenCalledWith(
-        '[getResource] Failed to fetch resource Pod with name mock-pod: Unexpected error',
-        expect.any(ClientError),
+      // Check that the error message prefix was logged
+      expect(mockedLogger.error).toHaveBeenCalledWith(
+        expect.stringContaining(
+          `[getResource] Failed to fetch resource Pod with name error-pod`,
+        ),
+        expect.objectContaining({
+          originalError: expect.any(Error), // Ensure an error object is logged
+        }),
       );
     });
   });

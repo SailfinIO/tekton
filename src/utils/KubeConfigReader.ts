@@ -3,7 +3,12 @@
 import { join } from 'path';
 import { spawn } from 'child_process';
 import { ResolvedKubeConfig } from '../models';
-import { ILogger, IFileSystem, IYamlParser } from '../interfaces';
+import {
+  ILogger,
+  IFileSystem,
+  IYamlParser,
+  IKubeConfigReader,
+} from '../interfaces';
 import { FileSystem } from './FileSystem';
 import { Logger } from './Logger';
 import { YamlParser } from './YamlParser';
@@ -20,7 +25,7 @@ import {
 } from '../errors';
 import { PemType } from '../enums';
 
-export class KubeConfigReader {
+export class KubeConfigReader implements IKubeConfigReader {
   private readonly kubeConfigPath: string;
   private readonly fileSystem: IFileSystem = new FileSystem();
   private readonly yamlParser: IYamlParser = new YamlParser();
