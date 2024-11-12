@@ -108,5 +108,8 @@
       "import": "./dist/index.js",
       "require": "./dist/index.js"
     }
+  },
+  "dependencies": {
+    "conventional-changelog-conventionalcommits": "^8.0.0"
   }
 }
