@@ -325,8 +325,19 @@ export class KubeConfigReader implements IKubeConfigReader {
   }
 
   private constructServerUrl(): string {
-    const serviceHost = process.env.KUBERNETES_SERVICE_HOST!;
-    const servicePort = process.env.KUBERNETES_SERVICE_PORT!;
+    const serviceHost = process.env.KUBERNETES_SERVICE_HOST;
+    const servicePort = process.env.KUBERNETES_SERVICE_PORT;
+
+    if (!serviceHost || !servicePort) {
+      this.logger.error('Missing Kubernetes service environment variables.', {
+        serviceHost,
+        servicePort,
+      });
+      throw new ConfigFileNotFoundError(
+        'Missing Kubernetes service environment variables.',
+      );
+    }
+
     return `https://${serviceHost}:${servicePort}`;
   }
 
