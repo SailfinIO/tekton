@@ -74,7 +74,6 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: production
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/drda'
     permissions:
       contents: write
       issues: write
