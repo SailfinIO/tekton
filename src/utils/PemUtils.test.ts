@@ -196,18 +196,69 @@ InvalidBase64Data@@@
       }).toThrow(PemConversionError);
     });
 
-    // it('should throw an error if input is not a Buffer', () => {
-    //   // @ts-ignore
-    //   expect(() => {
-    //     PemUtils.bufferToPem('Not a buffer', PemType.CERTIFICATE);
-    //   }).toThrow(PemConversionError);
-    // });
+    it('should throw an error if input is not a Buffer', () => {
+      const invalidString = 'Not a buffer' as unknown as Buffer;
+      const invalidNumber = 12345 as unknown as Buffer;
+      const invalidObject = {} as Buffer;
+
+      expect(() => {
+        PemUtils.bufferToPem(invalidString, PemType.CERTIFICATE);
+      }).toThrow(PemConversionError);
+
+      expect(() => {
+        PemUtils.bufferToPem(invalidNumber, PemType.PRIVATE_KEY);
+      }).toThrow(PemConversionError);
+
+      expect(() => {
+        PemUtils.bufferToPem(invalidObject, PemType.RSA_PRIVATE_KEY);
+      }).toThrow(PemConversionError);
+    });
+
+    it('should throw an error if the buffer does not contain valid base64 data', () => {
+      // Mock the isValidBase64 method to return false
+      const originalIsValidBase64 = PemUtils.isValidBase64;
+      PemUtils.isValidBase64 = jest.fn().mockReturnValue(false);
+
+      expect(() => {
+        PemUtils.bufferToPem(sampleBuffer, PemType.CERTIFICATE);
+      }).toThrow(PemConversionError);
+
+      expect(() => {
+        PemUtils.bufferToPem(sampleBuffer, PemType.PRIVATE_KEY);
+      }).toThrow(PemConversionError);
+
+      // Restore the original method
+      PemUtils.isValidBase64 = originalIsValidBase64;
+    });
 
     it('should handle buffer containing non-ASCII data', () => {
       const binaryBuffer = Buffer.from([0xff, 0xee, 0xdd, 0xcc]);
       const pem = PemUtils.bufferToPem(binaryBuffer, PemType.CERTIFICATE);
       expect(pem).toContain('-----BEGIN CERTIFICATE-----');
       expect(pem).toContain('-----END CERTIFICATE-----');
+    });
+    it('should format base64 string with line breaks every 64 characters', () => {
+      // Create a buffer with enough data to generate a base64 string longer than 64 characters
+      const longData = 'A'.repeat(100); // 100 characters
+      const longBuffer = Buffer.from(longData, 'utf-8');
+
+      const pem = PemUtils.bufferToPem(longBuffer, PemType.CERTIFICATE);
+
+      // Extract the base64 part from the PEM
+      const base64Content = pem
+        .replace(`-----BEGIN ${PemType.CERTIFICATE}-----\n`, '')
+        .replace(`\n-----END ${PemType.CERTIFICATE}-----\n`, '');
+
+      // Check that the base64 content has line breaks every 64 characters
+      const lines = base64Content.split('\n');
+      lines.forEach((line, index) => {
+        if (index < lines.length - 1) {
+          expect(line.length).toBe(64);
+        } else {
+          // The last line can be <= 64 characters
+          expect(line.length).toBeLessThanOrEqual(64);
+        }
+      });
     });
   });
 });
