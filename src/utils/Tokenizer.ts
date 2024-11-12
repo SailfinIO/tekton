@@ -17,7 +17,7 @@ export class Tokenizer {
 
     rawLines.forEach((original, index) => {
       const lineNumber = index + 1;
-      const trimmedRight = original.replace(/\s+$/, '');
+      const trimmedRight = original.trimEnd();
       const trimmed = trimmedRight.trim();
       const isBlank = trimmed === '';
       const isComment = trimmed.startsWith('#');
