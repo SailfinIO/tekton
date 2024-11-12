@@ -50,14 +50,26 @@ export class YamlParser implements IYamlParser {
     return this._indentSize;
   }
 
-  public parse(yaml: string): YAMLValue {
+  public parse(yaml: string): YAMLValue | YAMLValue[] {
     this.validateInput(yaml);
 
     const tokenizedLines = Tokenizer.tokenize(yaml);
+    const documents: YAMLValue[] = [];
+    this._stack = [{ indent: -1, obj: {}, type: NodeType.Map }];
+    this._multiLineState = null;
+
     for (const line of tokenizedLines) {
       if (line.isDirective) {
         this.handleDirective(line);
-      } else if (!line.isDocumentMarker && !line.isBlank && !line.isComment) {
+      } else if (line.isDocumentMarker) {
+        if (this._stack.length > 1 || this._multiLineState) {
+          // Push the current document to documents array
+          documents.push(this._stack[0].obj);
+          // Reset the parser for the next document
+          this._stack = [{ indent: -1, obj: {}, type: NodeType.Map }];
+          this._multiLineState = null;
+        }
+      } else if (!line.isBlank && !line.isComment) {
         this.processLine(line);
       } else if (this.multiLineState) {
         this.continueMultiLineScalar(line);
@@ -68,7 +80,12 @@ export class YamlParser implements IYamlParser {
       this.endMultiLineScalar();
     }
 
-    return this._stack[0].obj;
+    // Push the last document if it's not empty
+    if (Object.keys(this._stack[0].obj).length > 0) {
+      documents.push(this._stack[0].obj);
+    }
+
+    return documents.length === 1 ? documents[0] : documents;
   }
 
   private validateInput(yaml: string): void {
@@ -92,6 +109,22 @@ export class YamlParser implements IYamlParser {
   }
 
   private processLine(line: TokenizedLine): void {
+    // Enforce indentation multiples
+    if (line.indent % this._indentSize !== 0) {
+      throw new ParsingError(
+        `Invalid indentation at line ${line.lineNumber}. Expected multiples of ${this._indentSize} spaces.`,
+        line.content,
+      );
+    }
+
+    // Disallow tabs in indentation
+    const indentContent = line.original.slice(0, line.indent);
+    if (/\t/.test(indentContent)) {
+      throw new ParsingError(
+        `Tabs are not allowed for indentation at line ${line.lineNumber}.`,
+        line.content,
+      );
+    }
     this.popStackToMatchIndent(line);
 
     if (this.handleMultiLineScalars(line)) {
@@ -170,9 +203,17 @@ export class YamlParser implements IYamlParser {
   }
 
   private endMultiLineScalar(): void {
-    const value = this.multiLineState!.lines.join('\n');
+    let value: string;
+    if (this.multiLineState.type === ScalarStyle.Folded) {
+      // Replace newlines with spaces for folded scalars
+      value = this.multiLineState.lines.join(' ');
+    } else {
+      // Keep newlines for literal scalars
+      value = this.multiLineState.lines.join('\n');
+    }
+
     const currentElement = this._stack[this._stack.length - 1];
-    (currentElement.obj as YAMLMap)[this.multiLineState!.key] = value;
+    (currentElement.obj as YAMLMap)[this.multiLineState.key] = value;
     this.multiLineState = null;
   }
 
@@ -458,6 +499,19 @@ export class YamlParser implements IYamlParser {
 
   private stringifyData(data: YAMLValue, indentLevel: number): string {
     if (this.isPrimitive(data)) {
+      if (typeof data === 'string') {
+        if (data.includes('\n')) {
+          // Use literal block scalar for multi-line strings
+          const lines = data
+            .split('\n')
+            .map(
+              (line) => ' '.repeat(this._indentSize * (indentLevel + 1)) + line,
+            )
+            .join('\n');
+          return `|\n${lines}`;
+        }
+        return this.formatPrimitive(data);
+      }
       return this.formatPrimitive(data);
     }
 
@@ -483,6 +537,7 @@ export class YamlParser implements IYamlParser {
 
   private formatPrimitive(data: YAMLValue): string {
     if (typeof data === 'string') {
+      if (data === '') return '""'; // Handle empty strings
       return this.needsQuoting(data) ? `"${data}"` : data;
     }
     return String(data);
@@ -563,6 +618,7 @@ export class YamlParser implements IYamlParser {
   }
 
   private needsQuoting(str: string): boolean {
+    // Allow strings with spaces without quotes
     return /[:{}\[\],&*#?|\-<>@\%`]/.test(str) || /\s/.test(str);
   }
 

@@ -2,13 +2,29 @@
   "branches": [
     "main",
     {
-      "name": "prerelease",
-      "prerelease": true,
-      "tag": "prerelease"
+      "name": "beta",
+      "prerelease": true
     }
   ],
   "plugins": [
-    "@semantic-release/commit-analyzer",
+    [
+      "@semantic-release/commit-analyzer",
+      {
+        "preset": "conventionalcommits",
+        "releaseRules": [
+          { "type": "feat", "release": "minor" },
+          { "type": "fix", "release": "patch" },
+          { "type": "chore", "release": false },
+          { "type": "docs", "release": false },
+          { "type": "refactor", "release": "patch" },
+          { "type": "style", "release": false },
+          { "type": "test", "release": false }
+        ],
+        "parserOpts": {
+          "noteKeywords": ["BREAKING CHANGE", "BREAKING CHANGES"]
+        }
+      }
+    ],
     "@semantic-release/release-notes-generator",
     "@semantic-release/changelog",
     "@semantic-release/npm",
@@ -21,5 +37,6 @@
         "push": true
       }
     ]
-  ]
+  ],
+  "preset": "conventionalcommits"
 }

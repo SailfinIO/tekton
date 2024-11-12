@@ -19,12 +19,12 @@ const config: Config = {
     '^.+\\.(ts|tsx)$': [
       'ts-jest',
       {
-        tsconfig: 'tsconfig.json',
+        tsconfig: 'tsconfig.test.json',
       },
     ],
   },
 
-  coveragePathIgnorePatterns: ['node_modules/'],
+  coveragePathIgnorePatterns: ['node_modules/', '/__mocks__/'],
 
   // Update moduleDirectories to include 'src' instead of 'lib'
   moduleDirectories: ['node_modules', 'src'],

@@ -1,4 +1,6 @@
-export class PemFormatError extends Error {
+import { KubeConfigError } from './ConfigError';
+
+export class PemFormatError extends KubeConfigError {
   constructor(message: string) {
     super(message);
     this.name = this.constructor.name;
@@ -6,7 +8,7 @@ export class PemFormatError extends Error {
   }
 }
 
-export class PemConversionError extends Error {
+export class PemConversionError extends KubeConfigError {
   constructor(message: string) {
     super(message);
     this.name = this.constructor.name;
