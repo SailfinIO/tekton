@@ -1,3 +1,9 @@
+## [0.0.2-beta.1](https://github.com/SailfinIO/tekton/compare/v0.0.1...v0.0.2-beta.1) (2024-11-12)
+
+### Bug Fixes
+
+* security hotspot ([f2f30ad](https://github.com/SailfinIO/tekton/commit/f2f30ad38fe48324a36dcd4dd31c0e1c0bbd5551))
+
 ## 1.0.0-beta.1 (2024-11-12)
 
 ### Bug Fixes
