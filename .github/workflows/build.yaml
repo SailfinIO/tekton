@@ -78,7 +78,6 @@ jobs:
       contents: write
       issues: write
       packages: write
-    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/prerelease')
     steps:
       - name: Checkout the code
         uses: actions/checkout@v4
