@@ -124,6 +124,28 @@ describe('YamlParser', () => {
         mixed: [{ key: 'value' }, { list: ['item1'] }],
       });
     });
+    it('should handle sequences of sequences', () => {
+      const yaml = 'matrix:\n  - - 1\n    - 2\n  - - 3\n    - 4';
+      const result = yamlParser.parse(yaml);
+      expect(result).toEqual({
+        matrix: [
+          [1, 2],
+          [3, 4],
+        ],
+      });
+    });
+
+    it('should handle maps within maps within sequences', () => {
+      const yaml =
+        'data:\n  - info:\n      name: John\n      age: 30\n  - info:\n      name: Jane\n      age: 25';
+      const result = yamlParser.parse(yaml);
+      expect(result).toEqual({
+        data: [
+          { info: { name: 'John', age: 30 } },
+          { info: { name: 'Jane', age: 25 } },
+        ],
+      });
+    });
   });
 
   describe('stringify', () => {

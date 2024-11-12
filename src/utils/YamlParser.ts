@@ -99,10 +99,27 @@ export class YamlParser implements IYamlParser {
     }
 
     const currentElement = this.getCurrentElement();
+
     if (line.content.startsWith('- ')) {
       this.handleSequence(line, currentElement);
     } else {
-      this.handleMapping(line, currentElement);
+      // Check if current element is a sequence
+      if (currentElement.type === NodeType.Sequence) {
+        // Handle mapping within a sequence
+        const newMap: YAMLMap = {};
+        (currentElement.obj as YAMLSequence).push(newMap);
+        const newStackElement: MapStackElement = {
+          indent: line.indent,
+          obj: newMap,
+          type: NodeType.Map,
+          key: null,
+        };
+        this._stack.push(newStackElement);
+        // Process the mapping within the sequence
+        this.processLine(line);
+      } else {
+        this.handleMapping(line, currentElement);
+      }
     }
   }
 
@@ -214,56 +231,49 @@ export class YamlParser implements IYamlParser {
     const key = currentElement.key;
 
     if (key === null) {
-      // If the current map is empty, replace it with a sequence
-      if (Object.keys(map).length === 0) {
-        const seq: YAMLSequence = [];
-        seq.push(seqItem);
+      // Remove the check for map emptiness
+      const seq: YAMLSequence = [];
+      seq.push(seqItem);
 
-        // Update the parent map or sequence to point to the new sequence
-        const parentElement = this._stack[this._stack.length - 2];
+      // Update the parent map or sequence to point to the new sequence
+      const parentElement = this._stack[this._stack.length - 2];
 
-        if (parentElement.type === NodeType.Map && parentElement.obj) {
-          const parentMap = parentElement.obj as YAMLMap;
+      if (parentElement.type === NodeType.Map && parentElement.obj) {
+        const parentMap = parentElement.obj as YAMLMap;
 
-          // Find the key in the parent map that points to the current map
-          const parentKey = Object.keys(parentMap).find(
-            (k) => parentMap[k] === map,
-          );
+        // Find the key in the parent map that points to the current map
+        const parentKey = Object.keys(parentMap).find(
+          (k) => parentMap[k] === map,
+        );
 
-          if (parentKey !== undefined) {
-            parentMap[parentKey] = seq;
-          } else {
-            throw new ParsingError(
-              `Cannot find key in parent map to update at line ${lineNumber}`,
-              '',
-            );
-          }
-        } else if (parentElement.type === NodeType.Sequence) {
-          const parentSeq = parentElement.obj as YAMLSequence;
-          // Replace the last item in the sequence with the new sequence
-          parentSeq[parentSeq.length - 1] = seq;
+        if (parentKey !== undefined) {
+          parentMap[parentKey] = seq;
         } else {
           throw new ParsingError(
-            `Parent element is not a map or sequence at line ${lineNumber}`,
+            `Cannot find key in parent map to update at line ${lineNumber}`,
             '',
           );
         }
-
-        // Update the current element to reflect the new sequence
-        currentElement.obj = seq;
-        currentElement.type = NodeType.Sequence;
-
-        // Update the stack element
-        this._stack[this._stack.length - 1] = currentElement;
-
-        this.updateStackWithSeqItem(seqItem, indent);
-        return;
+      } else if (parentElement.type === NodeType.Sequence) {
+        const parentSeq = parentElement.obj as YAMLSequence;
+        // Replace the last item in the sequence with the new sequence
+        parentSeq[parentSeq.length - 1] = seq;
       } else {
         throw new ParsingError(
-          `Sequence item at line ${lineNumber} with no key in non-empty map`,
+          `Parent element is not a map or sequence at line ${lineNumber}`,
           '',
         );
       }
+
+      // Update the current element to reflect the new sequence
+      currentElement.obj = seq;
+      currentElement.type = NodeType.Sequence;
+
+      // Update the stack element
+      this._stack[this._stack.length - 1] = currentElement;
+
+      this.updateStackWithSeqItem(seqItem, indent);
+      return;
     }
 
     // Existing code for when key is not null
@@ -287,7 +297,11 @@ export class YamlParser implements IYamlParser {
       return existingValue as YAMLSequence;
     }
 
-    if (existingValue === undefined || this.isEmptyObject(existingValue)) {
+    if (
+      existingValue === undefined ||
+      existingValue === null ||
+      this.isEmptyObject(existingValue)
+    ) {
       const seq: YAMLSequence = [];
       map[key] = seq;
       return seq;
@@ -310,6 +324,25 @@ export class YamlParser implements IYamlParser {
       this.pushNewStackElement(seqItem as YAMLSequence, indent);
     } else if (this.isNestedObject(seqItem)) {
       this.pushNewStackElement(seqItem as YAMLMap, indent);
+
+      // Handle keys with null or undefined values
+      const seqItemMap = seqItem as YAMLMap;
+      for (const [key, value] of Object.entries(seqItemMap)) {
+        if (value === null || value === undefined) {
+          // Assign an empty map to the key
+          const newMap: YAMLMap = {};
+          seqItemMap[key] = newMap;
+
+          // Push new stack element for this map
+          const newStackElement: MapStackElement = {
+            indent,
+            obj: newMap,
+            type: NodeType.Map,
+            key: key,
+          };
+          this._stack.push(newStackElement);
+        }
+      }
     }
   }
 
@@ -330,7 +363,7 @@ export class YamlParser implements IYamlParser {
         indent,
         obj: obj as YAMLMap,
         type: NodeType.Map,
-        key: null,
+        key: null, // Initialize key to null
       };
       this._stack.push(newStackElement);
     }
@@ -340,6 +373,7 @@ export class YamlParser implements IYamlParser {
     return (
       typeof value === 'object' &&
       value !== null &&
+      !Array.isArray(value) &&
       Object.keys(value).length === 0
     );
   }
@@ -349,11 +383,7 @@ export class YamlParser implements IYamlParser {
     currentElement: StackElement,
   ): void {
     const [key, valuePart] = this.extractKeyValue(line);
-    if (valuePart === '') {
-      this.assignEmptyMap(currentElement, key, line.indent);
-    } else {
-      this.assignValue(currentElement, key, valuePart, line.indent);
-    }
+    this.assignValue(currentElement, key, valuePart, line.indent);
   }
 
   private extractKeyValue(line: TokenizedLine): [string, string] {
@@ -393,6 +423,9 @@ export class YamlParser implements IYamlParser {
     const newMap: YAMLMap = {};
     (currentElement.obj as YAMLMap)[key] = newMap;
 
+    // Set currentElement.key to the key
+    currentElement.key = key;
+
     const newStackElement: MapStackElement = {
       indent,
       obj: newMap,
@@ -404,18 +437,26 @@ export class YamlParser implements IYamlParser {
   }
 
   private assignValue(
-    currentElement: StackElement,
+    currentElement: SequenceStackElement | MapStackElement,
     key: string,
     valuePart: string,
     indent: number,
   ): void {
-    const value = ValueParser.parseInlineCollection(valuePart);
-    (currentElement.obj as YAMLMap)[key] = value;
-    currentElement.key = key;
-
-    if (this.isComplexStructure(value)) {
-      this.pushNewStackElement(value as YAMLMap | YAMLSequence, indent);
+    let value: YAMLValue;
+    if (valuePart === '') {
+      value = {};
+      (currentElement.obj as YAMLMap)[key] = value;
+      this.pushNewStackElement(value as YAMLMap, indent);
+    } else {
+      value = ValueParser.parseInlineCollection(valuePart);
+      (currentElement.obj as YAMLMap)[key] = value;
+      if (this.isComplexStructure(value)) {
+        this.pushNewStackElement(value as YAMLMap | YAMLSequence, indent);
+      }
     }
+
+    // Always set currentElement.key to the key
+    currentElement.key = key;
   }
 
   private isComplexStructure(value: YAMLValue): boolean {

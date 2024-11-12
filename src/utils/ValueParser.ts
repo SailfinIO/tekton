@@ -23,6 +23,27 @@ export class ValueParser {
   }
 
   private static parseValue(value: string): any {
+    const trimmedValue = value.trim();
+
+    // Handle sequence indicators (lines starting with '- ')
+    if (trimmedValue.startsWith('- ')) {
+      // Parse the sequence items
+      const items = [];
+      let currentItem = trimmedValue;
+      while (currentItem.startsWith('- ')) {
+        const index = currentItem.indexOf('\n- ', 2);
+        let item;
+        if (index !== -1) {
+          item = currentItem.substring(2, index).trim();
+          currentItem = currentItem.substring(index + 1).trim();
+        } else {
+          item = currentItem.substring(2).trim();
+          currentItem = '';
+        }
+        items.push(this.parseValue(item));
+      }
+      return items;
+    }
     if (this.hasUnclosedQuotes(value)) {
       throw new ParsingError(`Unclosed quote in value: "${value}"`, value);
     }
@@ -176,7 +197,14 @@ export class ValueParser {
     const valuePart = value.slice(colonIndex + 1).trim();
 
     const parsedKey = this.parseValue(keyPart);
-    const parsedValue = this.parseValue(valuePart);
+
+    let parsedValue: any;
+    if (valuePart === '') {
+      parsedValue = null; // Assign null to defer value assignment
+    } else {
+      parsedValue = this.parseValue(valuePart);
+    }
+
     obj[parsedKey] = parsedValue;
 
     return obj;
@@ -330,7 +358,11 @@ export class ValueParser {
   }
 
   private static startsWithProhibitedChar(value: string): boolean {
-    const prohibitedChars = '-?:,[]{}#&*!|>\'"%@`';
+    const prohibitedChars = '?:,[]{}#&*!|>\'"%@`';
+    // Allow '-' if it's followed by a space (sequence indicator)
+    if (value.startsWith('- ')) {
+      return false;
+    }
     return value.length > 0 && prohibitedChars.includes(value[0]);
   }
 
@@ -348,15 +380,18 @@ export class ValueParser {
       isEscaped: false,
       bracketCount: 0,
       braceCount: 0,
+      parenCount: 0, // To handle parentheses if needed
     };
 
-    for (const char of str) {
+    for (let i = 0; i < str.length; i++) {
+      const char = str[i];
       this.updateParsingState(char, state);
 
       if (
         char === ',' &&
         state.bracketCount === 0 &&
         state.braceCount === 0 &&
+        state.parenCount === 0 &&
         !state.inSingleQuote &&
         !state.inDoubleQuote &&
         !state.isEscaped
