@@ -204,16 +204,16 @@ export class YamlParser implements IYamlParser {
 
   private endMultiLineScalar(): void {
     let value: string;
-    if (this.multiLineState!.type === ScalarStyle.Folded) {
+    if (this.multiLineState.type === ScalarStyle.Folded) {
       // Replace newlines with spaces for folded scalars
-      value = this.multiLineState!.lines.join(' ');
+      value = this.multiLineState.lines.join(' ');
     } else {
       // Keep newlines for literal scalars
-      value = this.multiLineState!.lines.join('\n');
+      value = this.multiLineState.lines.join('\n');
     }
 
     const currentElement = this._stack[this._stack.length - 1];
-    (currentElement.obj as YAMLMap)[this.multiLineState!.key] = value;
+    (currentElement.obj as YAMLMap)[this.multiLineState.key] = value;
     this.multiLineState = null;
   }
 
