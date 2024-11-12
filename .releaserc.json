@@ -9,6 +9,16 @@
   ],
   "plugins": [
     "@semantic-release/commit-analyzer",
+    {
+      "preset": "conventionalcommits",
+      "releaseRules": [
+        { "type": "feat", "release": "minor" },
+        { "type": "fix", "release": "patch" },
+        { "type": "chore", "release": false },
+        { "type": "docs", "release": false },
+        { "type": "refactor", "release": "patch" }
+      ]
+    },
     "@semantic-release/release-notes-generator",
     "@semantic-release/changelog",
     "@semantic-release/npm",
