@@ -42,7 +42,7 @@ jobs:
 
       - name: Upload coverage report to workspace
         if: success()
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: coverage
           path: coverage/lcov.info
@@ -56,7 +56,7 @@ jobs:
         with:
           fetch-depth: 0 # Shallow clones should be disabled for a better relevancy of analysis
       - name: Download coverage report from workspace
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: coverage
           path: coverage
@@ -78,6 +78,7 @@ jobs:
       contents: write
       issues: write
       packages: write
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/prerelease')
     steps:
       - name: Checkout the code
         uses: actions/checkout@v4
