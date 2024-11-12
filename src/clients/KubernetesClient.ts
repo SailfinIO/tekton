@@ -10,13 +10,7 @@
 import { request, RequestOptions } from 'https';
 import { URL } from 'url';
 import { ResolvedKubeConfig, KubernetesResource, WatchEvent } from '../models';
-import {
-  FileSystem,
-  Logger,
-  PemUtils,
-  YamlParser,
-  KubeConfigReader,
-} from '../utils';
+import { FileSystem, Logger, PemUtils, KubeConfigReader } from '../utils';
 import {
   ApiError,
   ClientError,
@@ -31,7 +25,7 @@ import {
   KubernetesClientOptions,
 } from '../interfaces';
 import { Readable } from 'stream';
-import { HttpStatus, LogLevel } from '../enums';
+import { HttpStatus, LogLevel, PemType } from '../enums';
 import { KindToResourceNameMap } from '../constants';
 
 /**
@@ -101,12 +95,7 @@ export class KubernetesClient implements IKubernetesClient {
       logger = new Logger(KubernetesClient.name, logLevel),
     } = options || {};
 
-    const reader = new KubeConfigReader(
-      kubeConfigPath,
-      fileSystem,
-      YamlParser,
-      logger,
-    );
+    const reader = new KubeConfigReader(kubeConfigPath);
 
     let kubeConfig: ResolvedKubeConfig;
 
@@ -215,7 +204,7 @@ export class KubernetesClient implements IKubernetesClient {
     cluster: ResolvedKubeConfig['cluster'],
     user: ResolvedKubeConfig['user'],
   ): Promise<void> {
-    this.logger.debug('Attaching certificates to request options');
+    this.logger.debug('Attaching certificates and tokens to request options');
 
     // Attach Client Certificate
     if (user.clientCertificate) {
@@ -224,7 +213,7 @@ export class KubernetesClient implements IKubernetesClient {
         user.clientCertificate,
         'utf8',
       );
-      options.cert = PemUtils.pemToBuffer(pem, 'CERTIFICATE');
+      options.cert = PemUtils.pemToBuffer(pem, PemType.CERTIFICATE);
     } else if (user.clientCertificateData) {
       this.logger.debug('Adding client certificate from base64 data');
       options.cert = Buffer.from(user.clientCertificateData, 'base64');
@@ -234,7 +223,7 @@ export class KubernetesClient implements IKubernetesClient {
     if (user.clientKey) {
       this.logger.debug('Adding client key from file');
       const pem = await this.fileSystem.readFile(user.clientKey, 'utf8');
-      options.key = PemUtils.pemToBuffer(pem, 'PRIVATE KEY');
+      options.key = PemUtils.pemToBuffer(pem, PemType.PRIVATE_KEY);
     } else if (user.clientKeyData) {
       this.logger.debug('Adding client key from base64 data');
       options.key = Buffer.from(user.clientKeyData, 'base64');
@@ -247,10 +236,19 @@ export class KubernetesClient implements IKubernetesClient {
         cluster.certificateAuthority,
         'utf8',
       );
-      options.ca = PemUtils.pemToBuffer(pem, 'CERTIFICATE');
+      options.ca = PemUtils.pemToBuffer(pem, PemType.CERTIFICATE);
     } else if (cluster.certificateAuthorityData) {
       this.logger.debug('Adding cluster CA certificate from base64 data');
       options.ca = Buffer.from(cluster.certificateAuthorityData, 'base64');
+    }
+
+    // Attach Token for Exec-Based Authentication
+    if (user.token) {
+      this.logger.debug('Adding Bearer token for authentication');
+      options.headers = {
+        ...options.headers,
+        Authorization: `Bearer ${user.token}`,
+      };
     }
 
     if (!options.ca) {
@@ -599,7 +597,8 @@ export class KubernetesClient implements IKubernetesClient {
    * @param labelSelector Optional label selector.
    * @param fieldSelector Optional field selector.
    * @returns Async generator yielding watch events.
-   * @throws {ClientError} if the resource cannot be watched.
+   * @throws {ParsingError} if JSON parsing fails.
+   * @throws {NetworkError} if a network error occurs.
    * @example Watch for changes to pods in the 'default' namespace:
    * ```typescript
    * for await (const event of client.watchResource('v1', 'Pod', 'default')) {
@@ -629,7 +628,8 @@ export class KubernetesClient implements IKubernetesClient {
 
     const options = await this.getRequestOptions('GET', path);
 
-    const logger = this.logger;
+    let hasError = false; // Flag to track if an error has occurred
+
     const stream = new Readable({
       read() {
         const req = request(options, (res) => {
@@ -638,26 +638,42 @@ export class KubernetesClient implements IKubernetesClient {
         });
 
         req.on('error', (err) => {
-          logger.error(
-            `Error occurred while watching resource: ${err.message}`,
-          );
-          this.destroy(new NetworkError('Error in watch stream.', err));
+          if (!hasError) {
+            // Only emit NetworkError if no previous error
+            console.error(
+              `Error occurred while watching resource: ${err.message}`,
+            );
+            this.destroy(new NetworkError('Error in watch stream.', err));
+          }
         });
         req.end();
       },
     });
 
-    for await (const chunk of stream) {
-      const data = chunk.toString();
-      for (const line of data.split('\n')) {
-        if (line.trim()) {
-          try {
-            yield JSON.parse(line) as WatchEvent<T>;
-          } catch (e) {
-            this.logger.error(`Failed to parse watch event JSON: ${e.message}`);
-            throw new Error('Failed to parse watch event JSON');
+    try {
+      for await (const chunk of stream) {
+        const data = chunk.toString();
+        for (const line of data.split('\n')) {
+          if (line.trim()) {
+            try {
+              yield JSON.parse(line) as WatchEvent<T>;
+            } catch (e: any) {
+              this.logger.error(
+                `Failed to parse watch event JSON: ${e.message}`,
+              );
+              hasError = true; // Set the flag to prevent NetworkError emission
+              throw new ParsingError('Failed to parse watch event JSON.', data);
+            }
           }
         }
+      }
+    } catch (e) {
+      if (e instanceof ParsingError) {
+        // Gracefully destroy the stream without emitting NetworkError
+        stream.destroy();
+        throw e;
+      } else {
+        throw e; // Re-throw other errors
       }
     }
   }
