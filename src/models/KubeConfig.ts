@@ -6,18 +6,18 @@ import { EnvVar } from './EnvVar';
  */
 export interface Cluster {
   /**
-   * The name of the cluster.
-   */
-  name: string;
-
-  /**
    * Cluster connection details, including server URL and certificate authority information.
    */
   cluster: {
     /**
+     * The name of the cluster.
+     */
+    name: string;
+
+    /**
      * The server URL for the Kubernetes API.
      */
-    server: string;
+    server: string | Record<string, any>;
 
     /**
      * The path to a file containing the certificate authority for the cluster.
@@ -207,14 +207,4 @@ export interface KubeConfig {
    * The list of contexts defined in the kubeconfig file.
    */
   contexts?: Context[];
-
-  /**
-   * Cluster-specific connection details referenced by contexts.
-   */
-  cluster: Cluster['cluster'];
-
-  /**
-   * User-specific authentication details referenced by contexts.
-   */
-  user: User['user'];
 }

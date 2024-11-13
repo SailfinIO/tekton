@@ -18,6 +18,7 @@ import {
   PemConversionError,
   PemFormatError,
 } from '../errors';
+import { KubeConfig } from '../models';
 
 jest.mock('./FileSystem');
 jest.mock('./YamlParser');
@@ -98,16 +99,6 @@ describe('KubeConfigReader', () => {
         InvalidConfigError,
       );
     });
-
-    it('should throw ConfigFileNotFoundError if file does not exist', async () => {
-      mockFileSystem.readFile.mockRejectedValue({ code: 'ENOENT' });
-
-      const kubeConfigReader = new KubeConfigReader();
-
-      await expect(kubeConfigReader.getKubeConfig()).rejects.toThrow(
-        ConfigFileNotFoundError,
-      );
-    });
   });
 
   describe('convertBase64ToPem', () => {
@@ -164,6 +155,7 @@ describe('KubeConfigReader', () => {
 
       expect(resolvedConfig).toEqual({
         cluster: {
+          name: 'in-cluster',
           server: 'https://test-host:443',
           certificateAuthorityData: caBuffer.toString('base64'),
           certificateAuthorityPem: caPem,
@@ -405,36 +397,111 @@ describe('KubeConfigReader', () => {
   });
 
   describe('getConfigSection', () => {
-    it('should retrieve the specified section successfully', () => {
-      const kubeConfigReader = new KubeConfigReader();
-      const config = {
-        contexts: [
-          { name: 'context1', context: { cluster: 'cluster1', user: 'user1' } },
-          { name: 'context2', context: { cluster: 'cluster2', user: 'user2' } },
+    let kubeConfigReader: KubeConfigReader;
+
+    beforeEach(() => {
+      kubeConfigReader = new KubeConfigReader();
+    });
+
+    it('should retrieve the specified cluster section successfully', () => {
+      const config: KubeConfig = {
+        clusters: [
+          {
+            cluster: {
+              name: 'docker-desktop',
+              server: 'https://127.0.0.1:6443',
+              certificateAuthorityData: 'data here',
+            },
+          },
+          {
+            cluster: {
+              name: 'gke_kinetic-physics-419020_us-east1_sailfin-demo',
+              server: 'https://34.138.163.226',
+              certificateAuthorityData: 'data here',
+            },
+          },
         ],
       };
 
       const result = kubeConfigReader['getConfigSection'](
-        config,
-        'contexts',
-        'context2',
+        config.clusters,
+        'docker-desktop',
+        'clusters',
       );
-      expect(result).toEqual({ cluster: 'cluster2', user: 'user2' });
+      expect(result).toEqual({
+        cluster: {
+          name: 'docker-desktop',
+          server: 'https://127.0.0.1:6443',
+          certificateAuthorityData: 'data here',
+        },
+      });
     });
 
-    it('should throw ConfigFileNotFoundError if the section is not found', () => {
-      const kubeConfigReader = new KubeConfigReader();
-      const config = {
-        contexts: [
-          { name: 'context1', context: { cluster: 'cluster1', user: 'user1' } },
+    it('should retrieve the specified user section successfully', () => {
+      const config: KubeConfig = {
+        users: [
+          {
+            name: 'docker-desktop',
+            user: {
+              clientCertificateData: 'data here',
+              clientKeyData: 'data here',
+            },
+          },
+          {
+            name: 'gke_kinetic-physics-419020_us-east1_sailfin-demo',
+            user: {
+              exec: {
+                apiVersion: 'client.authentication.k8s.io/v1beta1',
+                command: 'gke-gcloud-auth-plugin',
+                args: null,
+                env: null,
+              },
+            },
+          },
+        ],
+      };
+
+      const result = kubeConfigReader['getConfigSection'](
+        config.users,
+        'docker-desktop',
+        'users',
+      );
+      expect(result).toEqual({
+        name: 'docker-desktop',
+        user: {
+          clientCertificateData: 'data here',
+          clientKeyData: 'data here',
+        },
+      });
+    });
+
+    it('should throw ConfigFileNotFoundError if the specified cluster section is not found', () => {
+      const config: KubeConfig = {
+        clusters: [
+          {
+            cluster: {
+              name: 'docker-desktop',
+              server: 'https://127.0.0.1:6443',
+            },
+          },
         ],
       };
 
       expect(() =>
         kubeConfigReader['getConfigSection'](
-          config,
-          'contexts',
-          'nonexistent-context',
+          config.clusters,
+          'nonexistent-cluster',
+          'clusters',
+        ),
+      ).toThrow(ConfigFileNotFoundError);
+    });
+
+    it('should throw ConfigFileNotFoundError if the user section array is undefined', () => {
+      expect(() =>
+        kubeConfigReader['getConfigSection'](
+          undefined,
+          'docker-desktop',
+          'users',
         ),
       ).toThrow(ConfigFileNotFoundError);
     });

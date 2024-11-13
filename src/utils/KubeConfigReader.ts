@@ -2,7 +2,13 @@
 
 import { join } from 'path';
 import { spawn } from 'child_process';
-import { ResolvedKubeConfig } from '../models';
+import {
+  Cluster,
+  Context,
+  KubeConfig,
+  ResolvedKubeConfig,
+  User,
+} from '../models';
 import {
   ILogger,
   IFileSystem,
@@ -45,12 +51,11 @@ export class KubeConfigReader implements IKubeConfigReader {
 
       const { cluster, user } = this.extractConfigDetails(config);
 
+      // Validate and convert `certificateAuthorityData` to PEM if it exists
       this.validateData(
         cluster.certificateAuthorityData,
         'certificateAuthorityData',
       );
-
-      // Always convert certificateAuthorityData to PEM if it exists
       const certificateAuthorityPem = cluster.certificateAuthorityData
         ? this.convertBase64ToPem(
             cluster.certificateAuthorityData,
@@ -62,14 +67,13 @@ export class KubeConfigReader implements IKubeConfigReader {
       let clientCertificatePem: string | undefined;
       let clientKeyPem: string | undefined;
 
+      // Determine authentication type
       if (user.exec) {
-        // Handle exec-based authentication
-        token = await this.getExecToken(user.exec);
+        token = await this.getExecToken(user.exec); // Exec-based authentication
       } else if (user.token) {
-        // Handle token-based authentication
-        token = user.token.trim();
+        token = user.token.trim(); // Token-based authentication
       } else {
-        // Handle client-certificate-based authentication
+        // Client-certificate-based authentication
         this.validateData(user.clientCertificateData, 'clientCertificateData');
         this.validateData(user.clientKeyData, 'clientKeyData');
 
@@ -87,6 +91,7 @@ export class KubeConfigReader implements IKubeConfigReader {
 
       const resolvedConfig: ResolvedKubeConfig = {
         cluster: {
+          name: cluster.name, // Add the cluster name here
           server: cluster.server,
           certificateAuthorityData: cluster.certificateAuthorityData,
           certificateAuthorityPem,
@@ -102,7 +107,8 @@ export class KubeConfigReader implements IKubeConfigReader {
 
       return resolvedConfig;
     } catch (error: any) {
-      await this.handleError(error);
+      this.logger.error(`Unexpected error: ${error.message}`, error);
+      throw error;
     }
   }
 
@@ -171,7 +177,6 @@ export class KubeConfigReader implements IKubeConfigReader {
       // Convert CA certificate to PEM
       const caPem = PemUtils.bufferToPem(caBuffer, PemType.CERTIFICATE);
 
-      // Optionally, validate the PEM
       if (!PemUtils.isValidPem(caPem, PemType.CERTIFICATE)) {
         throw new PemFormatError('In-cluster CA certificate is invalid.');
       }
@@ -180,6 +185,7 @@ export class KubeConfigReader implements IKubeConfigReader {
 
       return {
         cluster: {
+          name: 'in-cluster', // Provide a generic name for in-cluster config
           server,
           certificateAuthorityData: caBuffer.toString('base64'),
           certificateAuthorityPem: caPem,
@@ -189,7 +195,8 @@ export class KubeConfigReader implements IKubeConfigReader {
         },
       };
     } catch (error: any) {
-      await this.handleError(error);
+      this.logger.error(`Unexpected error: ${error.message}`, error);
+      throw error;
     }
   }
 
@@ -215,26 +222,76 @@ export class KubeConfigReader implements IKubeConfigReader {
     }
   }
 
-  private extractConfigDetails(config: any): { cluster: any; user: any } {
-    const currentContextName: string = config.currentContext;
-    const context = this.getConfigSection(
-      config,
-      'contexts',
+  private extractConfigDetails(config: KubeConfig): {
+    cluster: Cluster['cluster'];
+    user: User['user'];
+  } {
+    const currentContextName = config.currentContext;
+    this.logger.debug(`Attempting to load context: ${currentContextName}`);
+
+    // Retrieve the current context by matching the `name` field in `contexts`
+    const context = this.getConfigSection<Context>(
+      config.contexts,
       currentContextName,
-    );
-    const cluster = this.getConfigSection(config, 'clusters', context.cluster);
-    const user = this.getConfigSection(config, 'users', context.user);
+      'contexts',
+    ).context;
+
+    // Access the cluster and user names from the context
+    const clusterName = context.cluster;
+    const userName = context.user;
+
+    // Retrieve the cluster and user details by their names in `clusters` and `users` arrays
+    // Return the `cluster` and `user` properties from the respective entries
+    const cluster = this.getConfigSection<Cluster>(
+      config.clusters,
+      clusterName,
+      'clusters',
+    ).cluster;
+
+    const user = this.getConfigSection<User>(
+      config.users,
+      userName,
+      'users',
+    ).user;
+
     return { cluster, user };
   }
 
-  private getConfigSection(config: any, section: string, name: string): any {
-    const entry = config[section].find((item: any) => item.name === name);
-    if (!entry) {
-      const errorMessage = `${section.slice(0, -1)} '${name}' not found in kubeconfig.`;
-      const errorObject = JSON.stringify(config, null, 2);
-      throw new ConfigFileNotFoundError(errorObject);
+  private getConfigSection<T>(
+    sectionArray: T[] | undefined,
+    name: string,
+    sectionName: string,
+  ): T {
+    if (!sectionArray) {
+      throw new ConfigFileNotFoundError(
+        `${sectionName} section not found in kubeconfig.`,
+      );
     }
-    return entry[section.slice(0, -1)];
+
+    this.logger.debug(
+      `Extracting ${sectionName.slice(0, -1)} '${name}' from kubeconfig.`,
+    );
+
+    // Adjusted to look for 'name' inside the nested object if not found at the top level
+    const entry = sectionArray.find((item: any) => {
+      return (
+        item.name === name || item[sectionName.slice(0, -1)]?.name === name
+      );
+    });
+
+    if (!entry) {
+      const availableNames = sectionArray
+        .map((item: any) => item.name || item[sectionName.slice(0, -1)]?.name)
+        .join(', ');
+      const errorMessage = `${sectionName.slice(0, -1)} '${name}' not found in kubeconfig. Available: ${availableNames}`;
+      this.logger.error(errorMessage);
+      throw new ConfigFileNotFoundError(errorMessage);
+    }
+
+    this.logger.debug(
+      `Found ${sectionName.slice(0, -1)} '${name}' in kubeconfig.`,
+    );
+    return entry;
   }
 
   /**
