@@ -245,6 +245,7 @@ export class KubeConfigReader implements IKubeConfigReader {
   }
 
   private mapKeys(obj: any): any {
+    this.logger.debug('Mapping keys in object.', JSON.stringify(obj));
     if (Array.isArray(obj)) {
       return obj.map((item) => this.mapKeys(item));
     } else if (obj !== null && typeof obj === 'object') {
