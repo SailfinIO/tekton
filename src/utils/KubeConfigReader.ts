@@ -227,6 +227,7 @@ export class KubeConfigReader implements IKubeConfigReader {
     const entry = config[section].find((item: any) => item.name === name);
     if (!entry) {
       const errorMessage = `${section.slice(0, -1)} '${name}' not found in kubeconfig.`;
+      this.logger.error(`KubeConfig Object: ${JSON.stringify(config)}`);
       throw new ConfigFileNotFoundError(errorMessage);
     }
     return entry[section.slice(0, -1)];
@@ -245,7 +246,6 @@ export class KubeConfigReader implements IKubeConfigReader {
   }
 
   private mapKeys(obj: any): any {
-    this.logger.debug('Mapping keys in object.', JSON.stringify(obj));
     if (Array.isArray(obj)) {
       return obj.map((item) => this.mapKeys(item));
     } else if (obj !== null && typeof obj === 'object') {
