@@ -1,3 +1,9 @@
+## [0.0.2-beta.5](https://github.com/SailfinIO/tekton/compare/v0.0.2-beta.4...v0.0.2-beta.5) (2024-11-13)
+
+### Bug Fixes
+
+* lgo the error object ([e71475f](https://github.com/SailfinIO/tekton/commit/e71475f401f007dab4990aba3837bc7f1383a440))
+
 ## [0.0.2-beta.4](https://github.com/SailfinIO/tekton/compare/v0.0.2-beta.3...v0.0.2-beta.4) (2024-11-13)
 
 ### Bug Fixes
