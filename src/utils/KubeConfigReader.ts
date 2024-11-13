@@ -231,8 +231,8 @@ export class KubeConfigReader implements IKubeConfigReader {
     const entry = config[section].find((item: any) => item.name === name);
     if (!entry) {
       const errorMessage = `${section.slice(0, -1)} '${name}' not found in kubeconfig.`;
-      this.logger.error(`KubeConfig Object: ${JSON.stringify(config)}`);
-      throw new ConfigFileNotFoundError(errorMessage);
+      const errorObject = JSON.stringify(config, null, 2);
+      throw new ConfigFileNotFoundError(errorObject);
     }
     return entry[section.slice(0, -1)];
   }
