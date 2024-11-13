@@ -198,6 +198,10 @@ export class KubeConfigReader implements IKubeConfigReader {
       this.kubeConfigPath,
       'utf8',
     );
+    this.logger.debug('Loaded kubeconfig file.', { path: this.kubeConfigPath });
+    this.logger.debug('Kubeconfig file content:', {
+      content: JSON.stringify(fileContent),
+    });
     return this.yamlParser.parse(fileContent);
   }
 
