@@ -1,3 +1,9 @@
+## [0.0.2-beta.6](https://github.com/SailfinIO/tekton/compare/v0.0.2-beta.5...v0.0.2-beta.6) (2024-11-13)
+
+### Bug Fixes
+
+* kube config loading ([7f5e88b](https://github.com/SailfinIO/tekton/commit/7f5e88bc206a57bb5601e1340734fab963bbb074))
+
 ## [0.0.2-beta.5](https://github.com/SailfinIO/tekton/compare/v0.0.2-beta.4...v0.0.2-beta.5) (2024-11-13)
 
 ### Bug Fixes
