@@ -1,3 +1,9 @@
+## [0.0.2-beta.2](https://github.com/SailfinIO/tekton/compare/v0.0.2-beta.1...v0.0.2-beta.2) (2024-11-13)
+
+### Bug Fixes
+
+* key mapping for config ([ec26217](https://github.com/SailfinIO/tekton/commit/ec262171d885fa08f73dc286b7f40d35d344ef0e))
+
 ## [0.0.2-beta.1](https://github.com/SailfinIO/tekton/compare/v0.0.1...v0.0.2-beta.1) (2024-11-12)
 
 ### Bug Fixes
