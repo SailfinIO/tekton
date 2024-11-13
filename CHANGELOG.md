@@ -1,3 +1,9 @@
+## [0.0.2-beta.4](https://github.com/SailfinIO/tekton/compare/v0.0.2-beta.3...v0.0.2-beta.4) (2024-11-13)
+
+### Bug Fixes
+
+* add debug logs to file loading ([9f47055](https://github.com/SailfinIO/tekton/commit/9f47055f6c4fd0538113d7d90c76f4edada6c70c))
+
 ## [0.0.2-beta.3](https://github.com/SailfinIO/tekton/compare/v0.0.2-beta.2...v0.0.2-beta.3) (2024-11-13)
 
 ### Bug Fixes
