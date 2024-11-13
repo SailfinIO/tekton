@@ -1,3 +1,9 @@
+## [0.0.2-beta.3](https://github.com/SailfinIO/tekton/compare/v0.0.2-beta.2...v0.0.2-beta.3) (2024-11-13)
+
+### Bug Fixes
+
+* log kube object error ([666b30c](https://github.com/SailfinIO/tekton/commit/666b30ca8cdf045a771c209bd02f3cdf33310aad))
+
 ## [0.0.2-beta.2](https://github.com/SailfinIO/tekton/compare/v0.0.2-beta.1...v0.0.2-beta.2) (2024-11-13)
 
 ### Bug Fixes
