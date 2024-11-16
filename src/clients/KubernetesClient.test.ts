@@ -257,6 +257,79 @@ describe('KubernetesClient', () => {
         unexpectedError,
       );
     });
+    describe('mapKeys', () => {
+      it('should correctly map keys from kebab-case to camelCase', () => {
+        const { KubeConfigReader } = jest.requireActual(
+          '../utils/KubeConfigReader',
+        );
+        const reader = new KubeConfigReader();
+        const input = {
+          'current-context': 'docker-desktop',
+          contexts: [
+            {
+              name: 'docker-desktop',
+              context: {
+                cluster: 'docker-desktop',
+                user: 'docker-desktop',
+              },
+            },
+          ],
+          clusters: [
+            {
+              name: 'docker-desktop',
+              cluster: {
+                'certificate-authority-data': 'some-data',
+                server: 'https://kubernetes.docker.internal:6443',
+              },
+            },
+          ],
+          users: [
+            {
+              name: 'docker-desktop',
+              user: {
+                'client-certificate-data': 'some-data',
+                'client-key-data': 'some-data',
+              },
+            },
+          ],
+        };
+
+        const expectedOutput = {
+          currentContext: 'docker-desktop',
+          contexts: [
+            {
+              name: 'docker-desktop',
+              context: {
+                cluster: 'docker-desktop',
+                user: 'docker-desktop',
+              },
+            },
+          ],
+          clusters: [
+            {
+              name: 'docker-desktop',
+              cluster: {
+                certificateAuthorityData: 'some-data',
+                server: 'https://kubernetes.docker.internal:6443',
+              },
+            },
+          ],
+          users: [
+            {
+              name: 'docker-desktop',
+              user: {
+                clientCertificateData: 'some-data',
+                clientKeyData: 'some-data',
+              },
+            },
+          ],
+        };
+
+        // Access the private mapKeys method
+        const result = (reader as any).mapKeys(input);
+        expect(result).toEqual(expectedOutput);
+      });
+    });
   });
 
   /**

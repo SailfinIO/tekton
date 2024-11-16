@@ -1,6 +1,6 @@
 {
   "name": "@sailfin/tekton",
-  "version": "0.0.2",
+  "version": "0.0.3-beta.1",
   "description": "A Tekton and K8s client for Node.js",
   "author": "Michael Curtis <mpbcurtis@gmail.com>",
   "readme": "README.md",
@@ -42,7 +42,7 @@
     "e2e-test": "jest --detectOpenHandles --forceExit --config jest.e2e.config.ts",
     "test:watch": "jest --watch --config jest.config.ts",
     "test:coverage": "jest --detectOpenHandles --forceExit --config jest.config.ts --coverage",
-    "start:dev": "cd testconnection && nest start --watch",
+    "start:dev": "nest start --watch",
     "lint": "eslint",
     "lint:fix": "eslint --fix",
     "format": "prettier --write \"src/**/*.ts\"",
@@ -77,7 +77,8 @@
     "ts-jest": "^29.2.5",
     "ts-node": "^10.9.2",
     "typedoc": "^0.26.11",
-    "typescript": "^5.6.3"
+    "typescript": "^5.6.3",
+    "conventional-changelog-conventionalcommits": "^8.0.0"
   },
   "files": [
     "dist",
@@ -108,8 +109,5 @@
       "import": "./dist/index.js",
       "require": "./dist/index.js"
     }
-  },
-  "dependencies": {
-    "conventional-changelog-conventionalcommits": "^8.0.0"
   }
 }

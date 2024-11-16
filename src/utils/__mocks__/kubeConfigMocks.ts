@@ -70,6 +70,7 @@ export const parsedValidKubeConfig = {
  */
 export const resolvedValidKubeConfig: ResolvedKubeConfig = {
   cluster: {
+    name: 'test-cluster-1',
     server: 'https://127.0.0.1:6443',
     certificateAuthorityData: Buffer.from('valid-ca-cert').toString('base64'),
     certificateAuthorityPem: `-----BEGIN CERTIFICATE-----\n${Buffer.from('valid-ca-cert').toString('base64')}\n-----END CERTIFICATE-----`,
@@ -88,6 +89,7 @@ export const resolvedValidKubeConfig: ResolvedKubeConfig = {
  */
 export const resolvedInClusterKubeConfig: ResolvedKubeConfig = {
   cluster: {
+    name: 'in-cluster',
     server: 'https://10.0.0.1:443',
     certificateAuthorityData: Buffer.from('ca-cert').toString('base64'),
     certificateAuthorityPem: `-----BEGIN CERTIFICATE-----\n${Buffer.from('ca-cert').toString('base64')}\n-----END CERTIFICATE-----`,
@@ -251,6 +253,7 @@ export const parsedTokenKubeConfig = {
 
 export const resolvedTokenKubeConfig: ResolvedKubeConfig = {
   cluster: {
+    name: 'test-cluster-1',
     server: 'https://127.0.0.1:6443',
     certificateAuthorityData: Buffer.from('valid-ca-cert').toString('base64'),
     certificateAuthorityPem: `-----BEGIN CERTIFICATE-----\n${Buffer.from('valid-ca-cert').toString('base64')}\n-----END CERTIFICATE-----`,

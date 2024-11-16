@@ -1,3 +1,43 @@
+## [0.0.3-beta.1](https://github.com/SailfinIO/tekton/compare/v0.0.2...v0.0.3-beta.1) (2024-11-16)
+
+### Bug Fixes
+
+* add debug logs to file loading ([9f47055](https://github.com/SailfinIO/tekton/commit/9f47055f6c4fd0538113d7d90c76f4edada6c70c))
+* key mapping for config ([ec26217](https://github.com/SailfinIO/tekton/commit/ec262171d885fa08f73dc286b7f40d35d344ef0e))
+* kube config loading ([7f5e88b](https://github.com/SailfinIO/tekton/commit/7f5e88bc206a57bb5601e1340734fab963bbb074))
+* lgo the error object ([e71475f](https://github.com/SailfinIO/tekton/commit/e71475f401f007dab4990aba3837bc7f1383a440))
+* log kube object error ([666b30c](https://github.com/SailfinIO/tekton/commit/666b30ca8cdf045a771c209bd02f3cdf33310aad))
+
+## [0.0.2-beta.6](https://github.com/SailfinIO/tekton/compare/v0.0.2-beta.5...v0.0.2-beta.6) (2024-11-13)
+
+### Bug Fixes
+
+* kube config loading ([7f5e88b](https://github.com/SailfinIO/tekton/commit/7f5e88bc206a57bb5601e1340734fab963bbb074))
+
+## [0.0.2-beta.5](https://github.com/SailfinIO/tekton/compare/v0.0.2-beta.4...v0.0.2-beta.5) (2024-11-13)
+
+### Bug Fixes
+
+* lgo the error object ([e71475f](https://github.com/SailfinIO/tekton/commit/e71475f401f007dab4990aba3837bc7f1383a440))
+
+## [0.0.2-beta.4](https://github.com/SailfinIO/tekton/compare/v0.0.2-beta.3...v0.0.2-beta.4) (2024-11-13)
+
+### Bug Fixes
+
+* add debug logs to file loading ([9f47055](https://github.com/SailfinIO/tekton/commit/9f47055f6c4fd0538113d7d90c76f4edada6c70c))
+
+## [0.0.2-beta.3](https://github.com/SailfinIO/tekton/compare/v0.0.2-beta.2...v0.0.2-beta.3) (2024-11-13)
+
+### Bug Fixes
+
+* log kube object error ([666b30c](https://github.com/SailfinIO/tekton/commit/666b30ca8cdf045a771c209bd02f3cdf33310aad))
+
+## [0.0.2-beta.2](https://github.com/SailfinIO/tekton/compare/v0.0.2-beta.1...v0.0.2-beta.2) (2024-11-13)
+
+### Bug Fixes
+
+* key mapping for config ([ec26217](https://github.com/SailfinIO/tekton/commit/ec262171d885fa08f73dc286b7f40d35d344ef0e))
+
 ## [0.0.2](https://github.com/SailfinIO/tekton/compare/v0.0.1...v0.0.2) (2024-11-12)
 
 ### Bug Fixes
