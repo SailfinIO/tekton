@@ -25,7 +25,7 @@ We take security issues seriously and appreciate your efforts to disclose vulner
 ### How to Report a Vulnerability
 
 1. **Do not report vulnerabilities via public GitHub issues.** This ensures the issue is addressed confidentially and responsibly.
-2. **Email**: Report vulnerabilities by sending an email to [mpbcurtis@gmail.com](mailto:mpbcurtis@gmail.com). Include the following details in your report:
+2. **Email**: Report vulnerabilities by sending an email to [mpbcurtis@gmail.com](mailto:michael@sailfin.io). Include the following details in your report:
    - A detailed description of the vulnerability.
    - Steps to reproduce the vulnerability, if applicable.
    - The potential impact of the vulnerability.
@@ -51,7 +51,7 @@ We take security issues seriously and appreciate your efforts to disclose vulner
 
 ### Security Contact
 
-For any security-related questions or concerns, please contact our security team at [mpbcurtis@gmail.com](mailto:mpbcurtis@gmail.com).
+For any security-related questions or concerns, please contact our security team at [mpbcurtis@gmail.com](mailto:michael@sailfin.io).
 
 ---
 
