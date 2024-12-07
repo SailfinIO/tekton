@@ -21,13 +21,13 @@ Thank you for considering contributing to the IBM DB2 Module for NestJS! Your co
 
 ## Code of Conduct
 
-This project adheres to the Contributor Covenant [Code of Conduct](CODE_OF_CONDUCT.md). By participating, you are expected to uphold this code. Please report unacceptable behavior to [mpbcurtis@gmail.com](mailto:mpbcurtis@gmail.com).
+This project adheres to the Contributor Covenant [Code of Conduct](CODE_OF_CONDUCT.md). By participating, you are expected to uphold this code. Please report unacceptable behavior to [mpbcurtis@gmail.com](mailto:michael@sailfin.io).
 
 ## How Can I Contribute?
 
 ### Reporting Bugs
 
-If you find a bug in the source code, you can help us by [submitting an issue](https://github.com/mcereal/ibm_db2/issues). Before submitting a bug report, please check if an issue already exists. If it does, add any additional information you have as a comment.
+If you find a bug in the source code, you can help us by [submitting an issue](https://github.com/SailfinIO/tekton/issues). Before submitting a bug report, please check if an issue already exists. If it does, add any additional information you have as a comment.
 
 When reporting a bug, please include:
 
@@ -39,7 +39,7 @@ When reporting a bug, please include:
 
 ### Suggesting Features
 
-We welcome feature suggestions! To suggest a new feature, please [submit an issue](https://github.com/mcereal/ibm_db2/issues) and describe the feature you'd like to see, the problem it solves, and any relevant examples or use cases. This will help us understand the context and potential impact of the feature.
+We welcome feature suggestions! To suggest a new feature, please [submit an issue](https://github.com/SailfinIO/tekton/issues) and describe the feature you'd like to see, the problem it solves, and any relevant examples or use cases. This will help us understand the context and potential impact of the feature.
 
 ### Improving Documentation
 
@@ -49,17 +49,17 @@ Documentation is key to any open-source project. You can contribute by improving
 - **Improve existing explanations**.
 - **Add new examples** or use cases.
 
-Submit documentation improvements directly as a [pull request](https://github.com/mcereal/ibm_db2/pulls).
+Submit documentation improvements directly as a [pull request](https://github.com/SailfinIO/tekton/pulls).
 
 ### Submitting Code Changes
 
 #### 1. Fork the Repository
 
-Fork the [ibm_db2 repository](https://github.com/mcereal/ibm_db2) on GitHub, and clone your fork to your local machine:
+Fork the [Tekton repository](https://github.com/SailfinIO/tekton) on GitHub, and clone your fork to your local machine:
 
 ```bash
-git clone https://github.com/your-username/ibm_db2.git
-cd ibm_db2
+git clone https://github.com/your-username/tekton.git
+cd tekton
 ```
 
 #### 2. Create a Branch
@@ -100,7 +100,7 @@ git push origin my-feature-branch
 
 #### 7. Submit a Pull Request
 
-Submit a pull request from your fork to the `main` branch of the `ibm_db2` repository. Include a detailed description of your changes and why they should be merged.
+Submit a pull request from your fork to the `main` branch of the `tekton` repository. Include a detailed description of your changes and why they should be merged.
 
 ## Development Setup
 
@@ -117,7 +117,7 @@ To set up the project for development, clone the repository and install the depe
 
 ```bash
 git clone
-cd ibm_db2
+cd tekton
 npm install
 ```
 
