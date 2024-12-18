@@ -1,6 +1,6 @@
-# Contributing to IBM DB2 Module for NestJS
+# Contributing to @sailfin/tekton
 
-Thank you for considering contributing to the IBM DB2 Module for NestJS! Your contributions are valuable to us, and this guide will help you understand our development process, how to report issues, and how to contribute code effectively.
+Thank you for considering contributing to @sailfin/tekton! Your contributions are valuable to us, and this guide will help you understand our development process, how to report issues, and how to contribute code effectively.
 
 ## Table of Contents
 
