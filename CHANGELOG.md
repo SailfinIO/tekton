@@ -1,3 +1,9 @@
+## [0.0.4](https://github.com/SailfinIO/tekton/compare/v0.0.3...v0.0.4) (2024-12-18)
+
+### Bug Fixes
+
+* old project name ([2096ab9](https://github.com/SailfinIO/tekton/commit/2096ab9dd8b180fc0c85ddbea2f2627a8a84b446))
+
 ## [0.0.3](https://github.com/SailfinIO/tekton/compare/v0.0.2...v0.0.3) (2024-11-16)
 
 ### Bug Fixes
